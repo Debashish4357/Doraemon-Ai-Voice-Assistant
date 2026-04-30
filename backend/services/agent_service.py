@@ -1,16 +1,13 @@
 """
-Agent Service — Core brain of Doraemon.
-Parses user intent and dispatches to the correct service.
-No external AI API needed — pure rule-based NLP.
+Agent Service — Rule-based fallback brain for Doraemon.
+Used when no GROQ_API_KEY is set.
+Clean, no static "I heard you say" responses.
 """
 from services import todo_service, memory_service
 
 
 def _extract_after(message: str, keyword: str) -> str:
-    """
-    Case-insensitive extraction of text after a keyword.
-    e.g. _extract_after("Add task buy milk", "add task") → "buy milk"
-    """
+    """Extract text after a keyword, case-insensitive."""
     idx = message.lower().find(keyword.lower())
     if idx == -1:
         return ""
@@ -19,213 +16,169 @@ def _extract_after(message: str, keyword: str) -> str:
 
 def process_message(message: str) -> dict:
     """
-    Main entry point. Takes user message, returns structured response.
-    Response format: { type, response, data }
+    Rule-based intent detection and dispatch.
+    Returns: { type, response, data }
     """
     msg = message.strip().lower()
 
     # ── GREETING ──────────────────────────────────────────────────────────────
-    # Only greet when the user explicitly says hi/hello/hey/doraemon.
-    # Use word-boundary style check so "history" doesn't trigger "hi".
     greet_words = ["hello", "hi", "hey", "doraemon"]
-    if any(f" {kw} " in f" {msg} " or msg == kw or msg.startswith(kw + " ") or msg.endswith(" " + kw)
-           for kw in greet_words):
+    if any(
+        f" {kw} " in f" {msg} " or msg == kw
+        or msg.startswith(kw + " ") or msg.endswith(" " + kw)
+        for kw in greet_words
+    ):
         return {
             "type": "chat",
-            "response": "Hi, I'm Doraemon, your AI assistant. How can I help you?",
+            "response": "Hi! I'm Doraemon. How can I help you today?",
             "data": None
         }
 
     # ── TO-DO: ADD ─────────────────────────────────────────────────────────────
-    add_keywords = ["add task", "add todo", "create task", "remind me to", "new task"]
-    for kw in add_keywords:
+    for kw in ["add task", "add todo", "create task", "remind me to", "new task"]:
         if kw in msg:
             task_text = _extract_after(message, kw)
             if not task_text:
-                return {"type": "chat", "response": "What task would you like me to add?", "data": None}
-            new_task = todo_service.add_todo(task_text)
-            print(f"[Agent] Added task: {task_text}")
+                return {"type": "chat", "response": "What task should I add?", "data": None}
+            task = todo_service.add_todo(task_text)
             return {
                 "type": "todo",
-                "response": f"Done! I've added '{task_text}' to your task list.",
-                "data": {"action": "add", "task": new_task}
+                "response": f"Done, added '{task_text}' to your tasks.",
+                "data": {"action": "add", "task": task}
             }
-
-    # ── TO-DO: LIST ────────────────────────────────────────────────────────────
-    list_keywords = ["show task", "list task", "show todo", "my task", "what are my task",
-                     "show my task", "all task", "pending task", "what tasks"]
-    if any(kw in msg for kw in list_keywords):
-        tasks = todo_service.list_todos()
-        if not tasks:
-            return {
-                "type": "todo",
-                "response": "Your task list is empty. Say 'add task' followed by the task name to add one.",
-                "data": {"action": "list", "tasks": []}
-            }
-        task_list = ", ".join([t["text"] for t in tasks])
-        count = len(tasks)
-        print(f"[Agent] Listing {count} tasks")
-        return {
-            "type": "todo",
-            "response": f"You have {count} task{'s' if count > 1 else ''}: {task_list}.",
-            "data": {"action": "list", "tasks": tasks}
-        }
 
     # ── TO-DO: UPDATE ──────────────────────────────────────────────────────────
-    update_keywords = ["update task", "edit task", "change task", "rename task", "modify task"]
-    for kw in update_keywords:
+    for kw in ["update task", "edit task", "change task", "rename task"]:
         if kw in msg:
-            # Expect format: "update task <old> to <new>"
             rest = _extract_after(message, kw)
             if " to " in rest.lower():
-                parts = rest.lower().split(" to ", 1)
-                old_text = parts[0].strip()
-                new_text = parts[1].strip()
-                tasks = todo_service.list_todos()
-                matched = None
-                for task in tasks:
-                    if old_text in task["text"].lower() or task["text"].lower() in old_text:
+                old_text, new_text = rest.lower().split(" to ", 1)
+                old_text, new_text = old_text.strip(), new_text.strip()
+                for task in todo_service.list_todos():
+                    if old_text in task["text"].lower():
                         todo_service.update_todo(task["id"], new_text)
-                        matched = task
-                        break
-                if matched:
-                    print(f"[Agent] Updated task: {matched['text']} → {new_text}")
-                    return {
-                        "type": "todo",
-                        "response": f"Done! I've updated the task to '{new_text}'.",
-                        "data": {"action": "update"}
-                    }
-                else:
-                    return {
-                        "type": "todo",
-                        "response": f"I couldn't find a task matching '{old_text}'. Say 'show my tasks' to see your list.",
-                        "data": None
-                    }
-            else:
+                        return {
+                            "type": "todo",
+                            "response": f"Updated — '{task['text']}' is now '{new_text}'.",
+                            "data": {"action": "update"}
+                        }
                 return {
-                    "type": "chat",
-                    "response": "To update a task, say: 'update task <old name> to <new name>'.",
+                    "type": "todo",
+                    "response": "I couldn't find that task. Say 'show my tasks' to see your list.",
                     "data": None
                 }
+            return {
+                "type": "chat",
+                "response": "Say: 'update task <old name> to <new name>'.",
+                "data": None
+            }
 
-    # ── TO-DO: DELETE ──────────────────────────────────────────────────────────    delete_keywords = ["delete task", "remove task", "complete task", "done with", "finish task", "mark done"]
-    for kw in delete_keywords:
+    # ── TO-DO: DELETE ──────────────────────────────────────────────────────────
+    for kw in ["delete task", "remove task", "complete task", "done with", "finish task"]:
         if kw in msg:
             tasks = todo_service.list_todos()
             if not tasks:
                 return {"type": "todo", "response": "You have no tasks to delete.", "data": None}
-
-            # Try to match by task text contained in the user's message
             deleted = None
+            # Match by task text in message
             for task in tasks:
                 if task["text"].lower() in msg:
                     todo_service.delete_todo(task["id"])
                     deleted = task
                     break
-
-            # Fallback: extract the word(s) after the keyword and fuzzy-match
+            # Fuzzy fallback
             if not deleted:
-                search_term = _extract_after(message, kw).lower()
-                if search_term:
-                    for task in tasks:
-                        if search_term in task["text"].lower() or task["text"].lower() in search_term:
-                            todo_service.delete_todo(task["id"])
-                            deleted = task
-                            break
-
+                search = _extract_after(message, kw).lower()
+                for task in tasks:
+                    if search and (search in task["text"].lower() or task["text"].lower() in search):
+                        todo_service.delete_todo(task["id"])
+                        deleted = task
+                        break
             if deleted:
-                print(f"[Agent] Deleted task: {deleted['text']}")
                 return {
                     "type": "todo",
-                    "response": f"Done! I've removed '{deleted['text']}' from your list.",
+                    "response": f"Removed '{deleted['text']}' from your list.",
                     "data": {"action": "delete", "task": deleted}
                 }
-            else:
-                task_names = ", ".join([t["text"] for t in tasks])
-                return {
-                    "type": "todo",
-                    "response": f"I couldn't find that task. Your current tasks are: {task_names}. Please say the exact task name.",
-                    "data": {"action": "list", "tasks": tasks}
-                }
+            names = ", ".join(t["text"] for t in tasks)
+            return {
+                "type": "todo",
+                "response": f"Couldn't find that task. Your tasks: {names}.",
+                "data": {"action": "list", "tasks": tasks}
+            }
+
+    # ── TO-DO: LIST ────────────────────────────────────────────────────────────
+    if any(kw in msg for kw in [
+        "show task", "list task", "show todo", "my task",
+        "what are my task", "show my task", "all task", "pending task"
+    ]):
+        tasks = todo_service.list_todos()
+        if not tasks:
+            return {
+                "type": "todo",
+                "response": "Your task list is empty.",
+                "data": {"action": "list", "tasks": []}
+            }
+        task_list = ", ".join(t["text"] for t in tasks)
+        return {
+            "type": "todo",
+            "response": f"You have {len(tasks)} task{'s' if len(tasks) > 1 else ''}: {task_list}.",
+            "data": {"action": "list", "tasks": tasks}
+        }
 
     # ── MEMORY: SAVE ───────────────────────────────────────────────────────────
-    save_keywords = ["remember", "don't forget", "note that", "keep in mind", "save that"]
-    for kw in save_keywords:
+    for kw in ["remember", "don't forget", "note that", "keep in mind", "save that"]:
         if kw in msg:
             content = _extract_after(message, kw)
             if not content:
-                return {"type": "chat", "response": "What would you like me to remember?", "data": None}
+                return {"type": "chat", "response": "What should I remember?", "data": None}
             mem = memory_service.save_memory(content)
-            print(f"[Agent] Saved memory: {content}")
             return {
                 "type": "memory",
-                "response": f"Got it! I'll remember: '{content}'.",
+                "response": f"Got it, I'll remember: '{content}'.",
                 "data": {"action": "save", "memory": mem}
             }
 
     # ── MEMORY: RECALL ─────────────────────────────────────────────────────────
-    recall_keywords = ["what did i tell", "what do you remember", "what did i say",
-                       "recall", "my info", "what do you know about me", "show memory",
-                       "list memory", "my memories"]
-    if any(kw in msg for kw in recall_keywords):
-        response_text = memory_service.get_memories_as_text()
-        print(f"[Agent] Recalling memories")
+    if any(kw in msg for kw in [
+        "what did i tell", "what do you remember", "what did i say",
+        "recall", "my info", "what do you know about me", "show memory", "my memories"
+    ]):
         return {
             "type": "memory",
-            "response": response_text,
+            "response": memory_service.get_memories_as_text(),
             "data": {"action": "list", "memories": memory_service.list_memories()}
         }
 
     # ── GOODBYE ────────────────────────────────────────────────────────────────
     if any(kw in msg for kw in ["bye", "goodbye", "see you", "take care", "exit", "quit"]):
-        return {
-            "type": "chat",
-            "response": "Goodbye! It was a pleasure helping you. Take care!",
-            "data": None
-        }
+        return {"type": "chat", "response": "Goodbye! Talk soon.", "data": None}
 
-    # ── THANK YOU ──────────────────────────────────────────────────────────────
+    # ── THANKS ─────────────────────────────────────────────────────────────────
     if any(kw in msg for kw in ["thank you", "thanks", "thank u"]):
-        return {
-            "type": "chat",
-            "response": "You're welcome! Let me know if you need anything else.",
-            "data": None
-        }
+        return {"type": "chat", "response": "You're welcome!", "data": None}
 
     # ── HELP ───────────────────────────────────────────────────────────────────
-    if any(kw in msg for kw in ["help", "what can you do", "capabilities", "commands"]):
+    if any(kw in msg for kw in ["help", "what can you do", "capabilities"]):
         return {
             "type": "chat",
             "response": (
-                "Here's what I can do: "
-                "Say 'add task buy milk' to add a task. "
-                "Say 'show my tasks' to list tasks. "
-                "Say 'delete task buy milk' to remove a task. "
-                "Say 'remember my exam is Monday' to save a memory. "
-                "Say 'what did I say' to recall memories."
+                "I can manage your tasks and memories. "
+                "Try: 'add task buy milk', 'show my tasks', "
+                "'delete task buy milk', 'remember my exam is Monday', "
+                "or 'what did I tell you?'."
             ),
             "data": None
         }
 
-    # ── DEFAULT: natural fallback (NO static "I heard you say" message) ────────
-    # Give a context-aware response based on what the user might have meant.
+    # ── DEFAULT ────────────────────────────────────────────────────────────────
     task_count = todo_service.get_todo_count()
     mem_count = len(memory_service.list_memories())
-
-    if task_count > 0 or mem_count > 0:
-        return {
-            "type": "chat",
-            "response": (
-                f"I'm not sure how to help with that. "
-                f"You currently have {task_count} task{'s' if task_count != 1 else ''} "
-                f"and {mem_count} saved memor{'ies' if mem_count != 1 else 'y'}. "
-                "Say 'help' to see what I can do."
-            ),
-            "data": None
-        }
-
+    context = ""
+    if task_count or mem_count:
+        context = f" You have {task_count} task{'s' if task_count != 1 else ''} and {mem_count} memor{'ies' if mem_count != 1 else 'y'}."
     return {
         "type": "chat",
-        "response": "I'm not sure how to help with that. Say 'help' to see what I can do, or try 'add task', 'show tasks', or 'remember something'.",
+        "response": f"I'm not sure about that.{context} Say 'help' to see what I can do.",
         "data": None
     }

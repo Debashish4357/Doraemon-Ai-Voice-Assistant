@@ -1,6 +1,6 @@
 """
-Agent Routes — Main chat endpoint that drives Doraemon's intelligence.
-Supports both rule-based and LLM-powered modes.
+Agent Routes — Doraemon's main chat endpoint.
+Automatically uses Groq LLM when GROQ_API_KEY is set, falls back to rule-based.
 """
 import os
 from fastapi import APIRouter
@@ -12,50 +12,40 @@ router = APIRouter()
 
 class ChatRequest(BaseModel):
     message: str
-    use_llm: bool = False  # Set to True to use Groq LLM mode
+    session_id: str = "default"
 
 
 @router.post("/chat")
 def chat(req: ChatRequest):
     """
-    Receive user message, process intent, return structured response.
-    
-    Modes:
-    - use_llm=False: Rule-based pattern matching (default, no API key needed)
-    - use_llm=True: Groq LLM with function calling (requires GROQ_API_KEY)
-    
+    Process user message and return agent response.
+    Auto-selects LLM mode if GROQ_API_KEY is available.
     Response: { type: 'chat'|'todo'|'memory', response: str, data: any }
     """
-    if not req.message.strip():
-        return {
-            "type": "chat",
-            "response": "I didn't catch that. Could you please repeat?",
-            "data": None
-        }
-    
-    # Check if LLM mode is requested and available
-    if req.use_llm and os.getenv("GROQ_API_KEY"):
+    msg = req.message.strip()
+    if not msg:
+        return {"type": "chat", "response": "I didn't catch that.", "data": None}
+
+    # ── Try LLM mode first ─────────────────────────────────────────────────────
+    if os.getenv("GROQ_API_KEY"):
         try:
-            from services.llm_agent_service import get_llm_agent
-            llm_agent = get_llm_agent()
-            result = llm_agent.process_message(req.message)
+            from services.llm_agent_service import process_message as llm_process
+            result = llm_process(msg, session_id=req.session_id)
             return result
         except Exception as e:
-            print(f"[LLM Mode Error] {e}, falling back to rule-based")
-            # Fall through to rule-based mode
-    
-    # Default: Rule-based mode
-    result = agent_service.process_message(req.message)
-    return result
+            print(f"[LLM Error] {e} — falling back to rule-based")
+
+    # ── Rule-based fallback ────────────────────────────────────────────────────
+    return agent_service.process_message(msg)
 
 
 @router.get("/mode")
 def get_mode():
-    """Check which agent mode is available."""
+    """Return current agent mode."""
     has_groq = bool(os.getenv("GROQ_API_KEY"))
     return {
-        "rule_based": True,
         "llm_powered": has_groq,
-        "default_mode": "llm" if has_groq else "rule_based",
+        "rule_based": True,
+        "active_mode": "llm" if has_groq else "rule_based",
         "model": "llama-3.3-70b-versatile" if has_groq else "pattern_matching"
     }
