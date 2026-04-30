@@ -1,34 +1,52 @@
+"""
+To-Do Routes — REST API endpoints for task management.
+"""
 from fastapi import APIRouter, HTTPException
-from typing import List
-from models.schemas import TodoCreate, TodoResponse, TodoUpdate
+from pydantic import BaseModel
 from services import todo_service
-import logging
 
-router = APIRouter(prefix="/todo", tags=["Todo Tool"])
-logger = logging.getLogger(__name__)
+router = APIRouter()
 
-@router.post("/add", response_model=TodoResponse)
-async def add_todo(todo_in: TodoCreate):
-    logger.info(f"Adding new todo: {todo_in.task}")
-    return await todo_service.add_todo(todo_in)
 
-@router.get("/list", response_model=List[TodoResponse])
-async def list_todos(skip: int = 0, limit: int = 100):
-    logger.info("Retrieving all todos")
-    return await todo_service.get_all_todos(skip, limit)
+class AddTodoRequest(BaseModel):
+    task: str
 
-@router.put("/update/{todo_id}", response_model=TodoResponse)
-async def update_todo(todo_id: str, todo_in: TodoUpdate):
-    logger.info(f"Updating todo with id: {todo_id}")
-    updated_todo = await todo_service.update_todo(todo_id, todo_in)
-    if not updated_todo:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    return updated_todo
 
-@router.delete("/delete/{todo_id}", response_model=dict)
-async def delete_todo(todo_id: str):
-    logger.info(f"Deleting todo with id: {todo_id}")
-    success = await todo_service.delete_todo(todo_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Todo not found")
-    return {"message": "Todo deleted successfully"}
+class UpdateTodoRequest(BaseModel):
+    task: str
+
+
+@router.post("/add")
+def add_todo(req: AddTodoRequest):
+    """Add a new task to the list."""
+    if not req.task.strip():
+        raise HTTPException(status_code=400, detail="Task text cannot be empty.")
+    new_task = todo_service.add_todo(req.task.strip())
+    return {"status": "success", "task": new_task}
+
+
+@router.get("/list")
+def list_todos():
+    """Return all tasks."""
+    tasks = todo_service.list_todos()
+    return {"tasks": tasks, "count": len(tasks)}
+
+
+@router.put("/update/{task_id}")
+def update_todo(task_id: str, req: UpdateTodoRequest):
+    """Update a task's text by its ID."""
+    if not req.task.strip():
+        raise HTTPException(status_code=400, detail="Task text cannot be empty.")
+    updated = todo_service.update_todo(task_id, req.task.strip())
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Task with id '{task_id}' not found.")
+    return {"status": "success", "task": updated}
+
+
+@router.delete("/delete/{task_id}")
+def delete_todo(task_id: str):
+    """Delete a task by its ID."""
+    deleted = todo_service.delete_todo(task_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Task with id '{task_id}' not found.")
+    return {"status": "success", "deleted_id": task_id}

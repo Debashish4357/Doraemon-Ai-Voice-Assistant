@@ -1,18 +1,28 @@
-from fastapi import APIRouter
-from typing import List
-from models.schemas import MemoryCreate, MemoryResponse
+"""
+Memory Routes — REST API endpoints for storing and recalling user info.
+"""
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 from services import memory_service
-import logging
 
-router = APIRouter(prefix="/memory", tags=["Memory"])
-logger = logging.getLogger(__name__)
+router = APIRouter()
 
-@router.post("/save", response_model=MemoryResponse)
-async def save_memory(memory_in: MemoryCreate):
-    logger.info("Saving new memory")
-    return await memory_service.save_memory(memory_in)
 
-@router.get("/list", response_model=List[MemoryResponse])
-async def list_memory():
-    logger.info("Retrieving all memories")
-    return await memory_service.get_all_memory()
+class SaveMemoryRequest(BaseModel):
+    content: str
+
+
+@router.post("/save")
+def save_memory(req: SaveMemoryRequest):
+    """Save a new memory item."""
+    if not req.content.strip():
+        raise HTTPException(status_code=400, detail="Memory content cannot be empty.")
+    mem = memory_service.save_memory(req.content.strip())
+    return {"status": "success", "memory": mem}
+
+
+@router.get("/list")
+def list_memories():
+    """Return all stored memories."""
+    memories = memory_service.list_memories()
+    return {"memories": memories, "count": len(memories)}

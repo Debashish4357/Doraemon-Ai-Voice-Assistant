@@ -1,130 +1,231 @@
-import os
-import json
-import logging
-from groq import AsyncGroq
-from dotenv import load_dotenv
-from models.schemas import AgentRequest, AgentResponse, TodoCreate, MemoryCreate
-from services import todo_service, memory_service, search_service
+"""
+Agent Service — Core brain of Doraemon.
+Parses user intent and dispatches to the correct service.
+No external AI API needed — pure rule-based NLP.
+"""
+from services import todo_service, memory_service
 
-load_dotenv()
-logger = logging.getLogger(__name__)
 
-# Initialize async Groq client
-groq_client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-GROQ_MODEL = "llama3-70b-8192"
+def _extract_after(message: str, keyword: str) -> str:
+    """
+    Case-insensitive extraction of text after a keyword.
+    e.g. _extract_after("Add task buy milk", "add task") → "buy milk"
+    """
+    idx = message.lower().find(keyword.lower())
+    if idx == -1:
+        return ""
+    return message[idx + len(keyword):].strip(" .,:!?")
 
-SYSTEM_PROMPT = """You are a helpful AI assistant that manages a To-Do list and stores important memories.
 
-When the user sends a message, decide which action to take and respond ONLY with a valid JSON object (no extra text) in this exact format:
-{
-  "intent": "add_todo" | "list_todos" | "delete_todo" | "save_memory" | "list_memory" | "search" | "chat",
-  "response": "Your friendly text response to the user",
-  "data": <optional extracted data>
-}
+def process_message(message: str) -> dict:
+    """
+    Main entry point. Takes user message, returns structured response.
+    Response format: { type, response, data }
+    """
+    msg = message.strip().lower()
 
-Intent rules:
-- "add_todo": User wants to add a task/reminder. Extract the task text in "data": {"task": "..."}
-- "list_todos": User wants to see their tasks.
-- "delete_todo": User wants to delete a task. Note that you don't have the ID, so inform them to use the API.
-- "save_memory": User shares important personal info (name, preferences, location, etc.). Extract the content in "data": {"content": "..."}
-- "list_memory": User asks what you remember about them.
-- "search": User asks a factual question that requires looking up information (e.g., news, facts, current events). Extract the search query in "data": {"query": "..."}
-- "chat": General conversation that doesn't match the above.
+    # ── GREETING ──────────────────────────────────────────────────────────────
+    # Only greet when the user explicitly says hi/hello/hey/doraemon.
+    # Use word-boundary style check so "history" doesn't trigger "hi".
+    greet_words = ["hello", "hi", "hey", "doraemon"]
+    if any(f" {kw} " in f" {msg} " or msg == kw or msg.startswith(kw + " ") or msg.endswith(" " + kw)
+           for kw in greet_words):
+        return {
+            "type": "chat",
+            "response": "Hi, I'm Doraemon, your AI assistant. How can I help you?",
+            "data": None
+        }
 
-Always be friendly, concise, and natural."""
+    # ── TO-DO: ADD ─────────────────────────────────────────────────────────────
+    add_keywords = ["add task", "add todo", "create task", "remind me to", "new task"]
+    for kw in add_keywords:
+        if kw in msg:
+            task_text = _extract_after(message, kw)
+            if not task_text:
+                return {"type": "chat", "response": "What task would you like me to add?", "data": None}
+            new_task = todo_service.add_todo(task_text)
+            print(f"[Agent] Added task: {task_text}")
+            return {
+                "type": "todo",
+                "response": f"Done! I've added '{task_text}' to your task list.",
+                "data": {"action": "add", "task": new_task}
+            }
 
-async def process_message(request: AgentRequest) -> AgentResponse:
-    message = request.message
-    logger.info(f"Processing message via Groq ({GROQ_MODEL}): {message}")
+    # ── TO-DO: LIST ────────────────────────────────────────────────────────────
+    list_keywords = ["show task", "list task", "show todo", "my task", "what are my task",
+                     "show my task", "all task", "pending task", "what tasks"]
+    if any(kw in msg for kw in list_keywords):
+        tasks = todo_service.list_todos()
+        if not tasks:
+            return {
+                "type": "todo",
+                "response": "Your task list is empty. Say 'add task' followed by the task name to add one.",
+                "data": {"action": "list", "tasks": []}
+            }
+        task_list = ", ".join([t["text"] for t in tasks])
+        count = len(tasks)
+        print(f"[Agent] Listing {count} tasks")
+        return {
+            "type": "todo",
+            "response": f"You have {count} task{'s' if count > 1 else ''}: {task_list}.",
+            "data": {"action": "list", "tasks": tasks}
+        }
 
-    try:
-        # Call Groq LLM
-        completion = await groq_client.chat.completions.create(
-            model=GROQ_MODEL,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": message}
-            ],
-            temperature=0.3,
-            max_tokens=512,
-        )
+    # ── TO-DO: UPDATE ──────────────────────────────────────────────────────────
+    update_keywords = ["update task", "edit task", "change task", "rename task", "modify task"]
+    for kw in update_keywords:
+        if kw in msg:
+            # Expect format: "update task <old> to <new>"
+            rest = _extract_after(message, kw)
+            if " to " in rest.lower():
+                parts = rest.lower().split(" to ", 1)
+                old_text = parts[0].strip()
+                new_text = parts[1].strip()
+                tasks = todo_service.list_todos()
+                matched = None
+                for task in tasks:
+                    if old_text in task["text"].lower() or task["text"].lower() in old_text:
+                        todo_service.update_todo(task["id"], new_text)
+                        matched = task
+                        break
+                if matched:
+                    print(f"[Agent] Updated task: {matched['text']} → {new_text}")
+                    return {
+                        "type": "todo",
+                        "response": f"Done! I've updated the task to '{new_text}'.",
+                        "data": {"action": "update"}
+                    }
+                else:
+                    return {
+                        "type": "todo",
+                        "response": f"I couldn't find a task matching '{old_text}'. Say 'show my tasks' to see your list.",
+                        "data": None
+                    }
+            else:
+                return {
+                    "type": "chat",
+                    "response": "To update a task, say: 'update task <old name> to <new name>'.",
+                    "data": None
+                }
 
-        raw = completion.choices[0].message.content.strip()
-        logger.info(f"Groq raw response: {raw}")
+    # ── TO-DO: DELETE ──────────────────────────────────────────────────────────    delete_keywords = ["delete task", "remove task", "complete task", "done with", "finish task", "mark done"]
+    for kw in delete_keywords:
+        if kw in msg:
+            tasks = todo_service.list_todos()
+            if not tasks:
+                return {"type": "todo", "response": "You have no tasks to delete.", "data": None}
 
-        # Parse the JSON intent response
-        parsed = json.loads(raw)
-        intent = parsed.get("intent", "chat")
-        response_text = parsed.get("response", "I'm not sure how to help with that.")
-        data = parsed.get("data", {})
+            # Try to match by task text contained in the user's message
+            deleted = None
+            for task in tasks:
+                if task["text"].lower() in msg:
+                    todo_service.delete_todo(task["id"])
+                    deleted = task
+                    break
 
-        # Execute the intent
-        if intent == "add_todo":
-            task_text = data.get("task") if data else message
-            new_todo = await todo_service.add_todo(TodoCreate(task=task_text))
-            return AgentResponse(
-                type="tool",
-                response=response_text,
-                data={"action": "add_todo", "todo": new_todo.model_dump()}
-            )
+            # Fallback: extract the word(s) after the keyword and fuzzy-match
+            if not deleted:
+                search_term = _extract_after(message, kw).lower()
+                if search_term:
+                    for task in tasks:
+                        if search_term in task["text"].lower() or task["text"].lower() in search_term:
+                            todo_service.delete_todo(task["id"])
+                            deleted = task
+                            break
 
-        elif intent == "list_todos":
-            todos = await todo_service.get_all_todos()
-            return AgentResponse(
-                type="tool",
-                response=response_text,
-                data={"action": "list_todos", "todos": [t.model_dump() for t in todos]}
-            )
+            if deleted:
+                print(f"[Agent] Deleted task: {deleted['text']}")
+                return {
+                    "type": "todo",
+                    "response": f"Done! I've removed '{deleted['text']}' from your list.",
+                    "data": {"action": "delete", "task": deleted}
+                }
+            else:
+                task_names = ", ".join([t["text"] for t in tasks])
+                return {
+                    "type": "todo",
+                    "response": f"I couldn't find that task. Your current tasks are: {task_names}. Please say the exact task name.",
+                    "data": {"action": "list", "tasks": tasks}
+                }
 
-        elif intent == "delete_todo":
-            return AgentResponse(
-                type="tool",
-                response=response_text,
-                data={"action": "requires_id_for_delete"}
-            )
+    # ── MEMORY: SAVE ───────────────────────────────────────────────────────────
+    save_keywords = ["remember", "don't forget", "note that", "keep in mind", "save that"]
+    for kw in save_keywords:
+        if kw in msg:
+            content = _extract_after(message, kw)
+            if not content:
+                return {"type": "chat", "response": "What would you like me to remember?", "data": None}
+            mem = memory_service.save_memory(content)
+            print(f"[Agent] Saved memory: {content}")
+            return {
+                "type": "memory",
+                "response": f"Got it! I'll remember: '{content}'.",
+                "data": {"action": "save", "memory": mem}
+            }
 
-        elif intent == "save_memory":
-            content = data.get("content") if data else message
-            new_mem = await memory_service.save_memory(MemoryCreate(content=content))
-            return AgentResponse(
-                type="memory",
-                response=response_text,
-                data={"action": "save_memory", "memory": new_mem.model_dump()}
-            )
+    # ── MEMORY: RECALL ─────────────────────────────────────────────────────────
+    recall_keywords = ["what did i tell", "what do you remember", "what did i say",
+                       "recall", "my info", "what do you know about me", "show memory",
+                       "list memory", "my memories"]
+    if any(kw in msg for kw in recall_keywords):
+        response_text = memory_service.get_memories_as_text()
+        print(f"[Agent] Recalling memories")
+        return {
+            "type": "memory",
+            "response": response_text,
+            "data": {"action": "list", "memories": memory_service.list_memories()}
+        }
 
-        elif intent == "list_memory":
-            memories = await memory_service.get_all_memory()
-            return AgentResponse(
-                type="memory",
-                response=response_text,
-                data={"action": "list_memory", "memories": [m.model_dump() for m in memories]}
-            )
+    # ── GOODBYE ────────────────────────────────────────────────────────────────
+    if any(kw in msg for kw in ["bye", "goodbye", "see you", "take care", "exit", "quit"]):
+        return {
+            "type": "chat",
+            "response": "Goodbye! It was a pleasure helping you. Take care!",
+            "data": None
+        }
 
-        elif intent == "search":
-            query = data.get("query") if data else message
-            search_result = await search_service.search_tavily(query)
-            return AgentResponse(
-                type="tool",
-                response=f"I found some information for you: {search_result}",
-                data={"action": "search", "query": query, "result": search_result}
-            )
+    # ── THANK YOU ──────────────────────────────────────────────────────────────
+    if any(kw in msg for kw in ["thank you", "thanks", "thank u"]):
+        return {
+            "type": "chat",
+            "response": "You're welcome! Let me know if you need anything else.",
+            "data": None
+        }
 
-        else:
-            # General chat
-            return AgentResponse(
-                type="chat",
-                response=response_text,
-            )
+    # ── HELP ───────────────────────────────────────────────────────────────────
+    if any(kw in msg for kw in ["help", "what can you do", "capabilities", "commands"]):
+        return {
+            "type": "chat",
+            "response": (
+                "Here's what I can do: "
+                "Say 'add task buy milk' to add a task. "
+                "Say 'show my tasks' to list tasks. "
+                "Say 'delete task buy milk' to remove a task. "
+                "Say 'remember my exam is Monday' to save a memory. "
+                "Say 'what did I say' to recall memories."
+            ),
+            "data": None
+        }
 
-    except json.JSONDecodeError:
-        # LLM didn't return valid JSON — return raw text as chat
-        logger.warning("Groq response was not valid JSON, returning as chat.")
-        raw_text = completion.choices[0].message.content.strip()
-        return AgentResponse(type="chat", response=raw_text)
+    # ── DEFAULT: natural fallback (NO static "I heard you say" message) ────────
+    # Give a context-aware response based on what the user might have meant.
+    task_count = todo_service.get_todo_count()
+    mem_count = len(memory_service.list_memories())
 
-    except Exception as e:
-        logger.error(f"Groq agent error: {e}")
-        return AgentResponse(
-            type="chat",
-            response="Sorry, I encountered an error processing your request. Please try again.",
-        )
+    if task_count > 0 or mem_count > 0:
+        return {
+            "type": "chat",
+            "response": (
+                f"I'm not sure how to help with that. "
+                f"You currently have {task_count} task{'s' if task_count != 1 else ''} "
+                f"and {mem_count} saved memor{'ies' if mem_count != 1 else 'y'}. "
+                "Say 'help' to see what I can do."
+            ),
+            "data": None
+        }
+
+    return {
+        "type": "chat",
+        "response": "I'm not sure how to help with that. Say 'help' to see what I can do, or try 'add task', 'show tasks', or 'remember something'.",
+        "data": None
+    }

@@ -1,33 +1,18 @@
+"""
+Doraemon AI Voice Agent - Backend Entry Point
+FastAPI server with CORS, routing, and startup greeting.
+"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from contextlib import asynccontextmanager
-from db.database import connect_db, close_db
-from db.collections import create_indexes
 from routes import todo, memory, agent
-from utils.helper import setup_logger
-
-# Setup logging
-logger = setup_logger()
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Startup
-    logger.info("Starting Voice AI Agent Backend...")
-    await connect_db()
-    await create_indexes()
-    yield
-    # Shutdown
-    await close_db()
-    logger.info("Backend shut down")
 
 app = FastAPI(
-    title="Voice-Based AI To-Do Agent API",
-    description="A clean, modular backend for an AI agent managing To-Dos and Memory using MongoDB.",
-    version="1.0.0",
-    lifespan=lifespan
+    title="Doraemon AI Voice Agent",
+    description="A friendly voice-based AI assistant with To-Do and Memory management.",
+    version="2.0.0"
 )
 
-# CORS configuration
+# Allow React frontend (any origin in dev)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -36,11 +21,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(todo.router)
-app.include_router(memory.router)
-app.include_router(agent.router)
+# Register route modules
+app.include_router(todo.router, prefix="/todo", tags=["To-Do"])
+app.include_router(memory.router, prefix="/memory", tags=["Memory"])
+app.include_router(agent.router, prefix="/agent", tags=["Agent"])
+
 
 @app.get("/")
 def root():
-    return {"message": "Welcome to the Voice-Based AI To-Do Agent API. Visit /docs for the API reference."}
+    return {"message": "Doraemon AI Agent is online. Visit /docs for API reference."}

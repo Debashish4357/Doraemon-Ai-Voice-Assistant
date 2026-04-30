@@ -1,32 +1,32 @@
-from typing import List
-from models.schemas import MemoryCreate, MemoryResponse
-from db.collections import memory_collection
-from datetime import datetime
-from bson import ObjectId
-import logging
+"""
+Memory Service — In-memory storage for user facts.
+Each memory: { id, content, saved_at }
+"""
+import time
 
-logger = logging.getLogger(__name__)
+# In-memory store
+_memories: list = []
 
-async def save_memory(memory_in: MemoryCreate) -> MemoryResponse:
-    memory_dict = memory_in.model_dump()
-    memory_dict["timestamp"] = datetime.utcnow()
-    
-    result = await memory_collection.insert_one(memory_dict)
-    new_memory = await memory_collection.find_one({"_id": result.inserted_id})
-    
-    return MemoryResponse(
-        id=str(new_memory["_id"]),
-        content=new_memory["content"],
-        timestamp=new_memory["timestamp"]
-    )
 
-async def get_all_memory() -> List[MemoryResponse]:
-    memories = []
-    cursor = memory_collection.find().sort("timestamp", -1)
-    async for document in cursor:
-        memories.append(MemoryResponse(
-            id=str(document["_id"]),
-            content=document["content"],
-            timestamp=document["timestamp"]
-        ))
-    return memories
+def save_memory(content: str) -> dict:
+    """Save a new memory item. Returns the saved item."""
+    memory = {
+        "id": str(int(time.time() * 1000)),
+        "content": content,
+        "saved_at": time.strftime("%Y-%m-%d %H:%M")
+    }
+    _memories.append(memory)
+    return memory
+
+
+def list_memories() -> list:
+    """Return all stored memories."""
+    return list(reversed(_memories))
+
+
+def get_memories_as_text() -> str:
+    """Return memories as a readable string for agent context."""
+    if not _memories:
+        return "I don't have any memories stored yet."
+    items = [f"- {m['content']}" for m in _memories]
+    return "Here is what I remember about you:\n" + "\n".join(items)

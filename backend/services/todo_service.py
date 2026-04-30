@@ -1,55 +1,41 @@
-from typing import List, Optional
-from models.schemas import TodoCreate, TodoResponse, TodoUpdate
-from db.collections import todo_collection
-from datetime import datetime
-from bson import ObjectId
-import logging
+"""
+Todo Service — In-memory storage for tasks.
+Each task: { id, text, created_at }
+"""
+import time
 
-logger = logging.getLogger(__name__)
+# In-memory store — persists while the server is running
+_todos: dict = {}
 
-async def add_todo(todo_in: TodoCreate) -> TodoResponse:
-    todo_dict = todo_in.model_dump()
-    todo_dict["created_at"] = datetime.utcnow()
-    
-    result = await todo_collection.insert_one(todo_dict)
-    new_todo = await todo_collection.find_one({"_id": result.inserted_id})
-    
-    return TodoResponse(
-        id=str(new_todo["_id"]),
-        task=new_todo["task"],
-        created_at=new_todo["created_at"]
-    )
 
-async def get_all_todos(skip: int = 0, limit: int = 100) -> List[TodoResponse]:
-    todos = []
-    cursor = todo_collection.find().sort("created_at", -1).skip(skip).limit(limit)
-    async for document in cursor:
-        todos.append(TodoResponse(
-            id=str(document["_id"]),
-            task=document["task"],
-            created_at=document["created_at"]
-        ))
-    return todos
+def add_todo(task: str) -> dict:
+    """Create and store a new task. Returns the new task."""
+    task_id = str(int(time.time() * 1000))  # millisecond timestamp as ID
+    task_obj = {"id": task_id, "text": task, "created_at": time.strftime("%Y-%m-%d %H:%M")}
+    _todos[task_id] = task_obj
+    return task_obj
 
-async def update_todo(todo_id: str, todo_in: TodoUpdate) -> Optional[TodoResponse]:
-    if not ObjectId.is_valid(todo_id):
-        return None
-        
-    update_data = {"$set": todo_in.model_dump()}
-    result = await todo_collection.update_one({"_id": ObjectId(todo_id)}, update_data)
-    
-    if result.modified_count == 1 or result.matched_count == 1:
-        updated_todo = await todo_collection.find_one({"_id": ObjectId(todo_id)})
-        return TodoResponse(
-            id=str(updated_todo["_id"]),
-            task=updated_todo["task"],
-            created_at=updated_todo["created_at"]
-        )
+
+def list_todos() -> list:
+    """Return all tasks sorted by creation time (oldest first)."""
+    return list(_todos.values())
+
+
+def update_todo(task_id: str, new_text: str) -> dict | None:
+    """Update a task's text by ID. Returns updated task or None if not found."""
+    if task_id in _todos:
+        _todos[task_id]["text"] = new_text
+        return _todos[task_id]
     return None
 
-async def delete_todo(todo_id: str) -> bool:
-    if not ObjectId.is_valid(todo_id):
-        return False
-        
-    result = await todo_collection.delete_one({"_id": ObjectId(todo_id)})
-    return result.deleted_count == 1
+
+def delete_todo(task_id: str) -> bool:
+    """Delete a task by ID. Returns True if deleted, False if not found."""
+    if task_id in _todos:
+        del _todos[task_id]
+        return True
+    return False
+
+
+def get_todo_count() -> int:
+    return len(_todos)
