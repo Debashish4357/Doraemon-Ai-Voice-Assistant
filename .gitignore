@@ -32,3 +32,4 @@ Thumbs.db
 backend/.env
 functions/.env
 frontend/.env
+.env
