@@ -1,16 +1,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 
-const API = 'http://localhost:8000';
-
-// ── Doraemon avatar — uses the image from /public/default.png
+const API        = 'http://localhost:8000';
 const AVATAR_SRC = '/default.png';
 
-// ── Suggestion chips shown below the avatar
 const SUGGESTIONS = [
-  { icon: '✅', label: 'Add task buy groceries',        msg: 'Add task buy groceries' },
-  { icon: '🧠', label: 'Remember my exam is tomorrow',  msg: 'Remember my exam is tomorrow' },
-  { icon: '📋', label: 'Show my tasks',                 msg: 'Show my tasks' },
-  { icon: '💬', label: 'What did I tell you?',          msg: 'What did I tell you?' },
+  { icon: '✅', label: 'Add task buy groceries',       msg: 'Add task buy groceries' },
+  { icon: '🧠', label: 'Remember my exam is tomorrow', msg: 'Remember my exam is tomorrow' },
+  { icon: '📋', label: 'Show my tasks',                msg: 'Show my tasks' },
+  { icon: '💬', label: 'What did I tell you?',         msg: 'What did I tell you?' },
 ];
 
 // ── TTS ────────────────────────────────────────────────────────────────────────
@@ -30,43 +27,70 @@ function speak(text, onStart, onEnd) {
   });
 }
 
-// ── Tone beep ──────────────────────────────────────────────────────────────────
 function playTone(freq = 660, dur = 0.1) {
   try {
-    const ctx  = new (window.AudioContext || window.webkitAudioContext)();
-    const osc  = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.connect(gain); gain.connect(ctx.destination);
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const g   = ctx.createGain();
+    osc.connect(g); g.connect(ctx.destination);
     osc.frequency.value = freq;
-    gain.gain.setValueAtTime(0.12, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
+    g.gain.setValueAtTime(0.1, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + dur);
     osc.start(); osc.stop(ctx.currentTime + dur);
   } catch (_) {}
 }
 
+// ── Typing dots component ──────────────────────────────────────────────────────
+function TypingDots() {
+  return (
+    <div className="typing-dots">
+      <span /><span /><span />
+    </div>
+  );
+}
+
+// ── Single message bubble ──────────────────────────────────────────────────────
+function MessageBubble({ msg }) {
+  const isUser = msg.role === 'user';
+  return (
+    <div className={`msg-row ${isUser ? 'msg-row--user' : 'msg-row--agent'}`}>
+      {!isUser && (
+        <div className="msg-avatar">
+          <img src={AVATAR_SRC} alt="Doraemon" />
+        </div>
+      )}
+      <div className={`msg-bubble ${isUser ? 'msg-bubble--user' : 'msg-bubble--agent'}`}>
+        {msg.typing ? <TypingDots /> : msg.text}
+      </div>
+      {isUser && <div className="msg-avatar msg-avatar--user">You</div>}
+    </div>
+  );
+}
+
 export default function DoraemonAgent() {
+  const [messages,    setMessages]    = useState([]);   // { id, role, text, typing? }
   const [status,      setStatus]      = useState('idle');
   const [isRunning,   setIsRunning]   = useState(false);
-  const [transcript,  setTranscript]  = useState('');
-  const [agentReply,  setAgentReply]  = useState('');
   const [todos,       setTodos]       = useState([]);
   const [memories,    setMemories]    = useState([]);
-  const [log,         setLog]         = useState([]);
   const [agentMode,   setAgentMode]   = useState('checking');
   const [textInput,   setTextInput]   = useState('');
   const [showModal,   setShowModal]   = useState(false);
   const [modalMode,   setModalMode]   = useState('add');
   const [editingTask, setEditingTask] = useState(null);
   const [modalText,   setModalText]   = useState('');
-  const [showSettings,setShowSettings]= useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
 
   const recognitionRef = useRef(null);
   const shouldStopRef  = useRef(false);
-  const logEndRef      = useRef(null);
+  const bottomRef      = useRef(null);
   const inputRef       = useRef(null);
+  const typingIdRef    = useRef(null);
 
-  // auto-scroll log
-  useEffect(() => { logEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [log]);
+  // auto-scroll to bottom on new messages
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages]);
 
   // ── Fetch sidebar data ───────────────────────────────────────────────────────
   const fetchData = useCallback(async () => {
@@ -90,67 +114,84 @@ export default function DoraemonAgent() {
     })();
   }, [fetchData]);
 
-  // ── Log helper ───────────────────────────────────────────────────────────────
-  const addLog = useCallback((role, text) => {
-    setLog(prev => [...prev.slice(-40), { role, text, id: Date.now() + Math.random() }]);
+  // ── Add message to thread ────────────────────────────────────────────────────
+  const pushMsg = useCallback((role, text, extra = {}) => {
+    const id = Date.now() + Math.random();
+    setMessages(prev => [...prev, { id, role, text, ...extra }]);
+    return id;
+  }, []);
+
+  const updateMsg = useCallback((id, patch) => {
+    setMessages(prev => prev.map(m => m.id === id ? { ...m, ...patch } : m));
   }, []);
 
   // ── Send to agent ────────────────────────────────────────────────────────────
   const sendToAgent = useCallback(async (message) => {
     if (!message.trim()) return;
-    addLog('user', message);
+
+    // Add user bubble
+    pushMsg('user', message);
     setStatus('thinking');
+
+    // Add typing indicator for agent
+    const typingId = pushMsg('agent', '', { typing: true });
+    typingIdRef.current = typingId;
+
     try {
-      const res  = await fetch(`${API}/agent/chat`, {
+      const res   = await fetch(`${API}/agent/chat`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ message, session_id: 'default' })
       });
       const data  = await res.json();
       const reply = data.response || "I'm not sure how to help.";
-      console.log('[User]', message, '\n[Agent]', reply);
-      setAgentReply(reply);
-      addLog('agent', reply);
+
+      console.log('[User]', message);
+      console.log('[Agent]', reply);
+
+      // Replace typing indicator with real reply
+      updateMsg(typingId, { text: reply, typing: false });
       await fetchData();
       await speak(reply, () => setStatus('speaking'), () => setStatus('idle'));
       return reply;
     } catch (err) {
       console.error('[sendToAgent]', err);
-      const msg = 'Connection error. Is the backend running?';
-      setAgentReply(msg);
-      addLog('agent', msg);
-      await speak(msg, () => setStatus('speaking'), () => setStatus('idle'));
+      const errMsg = 'Connection error. Is the backend running on port 8000?';
+      updateMsg(typingId, { text: errMsg, typing: false });
+      await speak(errMsg, () => setStatus('speaking'), () => setStatus('idle'));
       return null;
     }
-  }, [addLog, fetchData]);
+  }, [pushMsg, updateMsg, fetchData]);
 
   // ── Voice listen once ────────────────────────────────────────────────────────
   const listenOnce = useCallback(() => new Promise((resolve) => {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { setAgentReply('Speech Recognition not supported. Use Chrome.'); resolve({ text: null, stop: true }); return; }
+    if (!SR) {
+      pushMsg('agent', 'Speech Recognition not supported. Please use Chrome or Edge.');
+      resolve({ text: null, stop: true });
+      return;
+    }
     const rec = new SR();
     recognitionRef.current = rec;
     rec.lang = 'en-US'; rec.interimResults = false; rec.maxAlternatives = 1;
     setStatus('listening'); playTone(660, 0.1);
     rec.start();
-    rec.onresult  = e => { setTranscript(e.results[0][0].transcript.trim()); resolve({ text: e.results[0][0].transcript.trim(), stop: false }); };
+    rec.onresult  = e => resolve({ text: e.results[0][0].transcript.trim(), stop: false });
     rec.onnomatch = () => resolve({ text: null, stop: false });
     rec.onerror   = e => {
       if (e.error === 'no-speech') resolve({ text: null, stop: false });
-      else if (e.error === 'aborted') resolve({ text: null, stop: true });
       else resolve({ text: null, stop: true });
     };
-  }), []);
+  }), [pushMsg]);
 
   // ── Conversation loop ────────────────────────────────────────────────────────
   const startConversation = useCallback(async () => {
-    setIsRunning(true); shouldStopRef.current = false;
-    setTranscript(''); setStatus('idle');
+    setIsRunning(true); shouldStopRef.current = false; setStatus('idle');
     while (!shouldStopRef.current) {
       const { text, stop } = await listenOnce();
       if (stop || shouldStopRef.current) break;
       if (!text) continue;
       await sendToAgent(text);
-      if (['bye','goodbye','exit','quit','stop'].some(k => text.toLowerCase().includes(k))) break;
+      if (['bye','goodbye','exit','quit'].some(k => text.toLowerCase().includes(k))) break;
       await new Promise(r => setTimeout(r, 400));
     }
     setIsRunning(false); setStatus('idle'); playTone(440, 0.1);
@@ -160,7 +201,7 @@ export default function DoraemonAgent() {
     shouldStopRef.current = true;
     recognitionRef.current?.abort();
     window.speechSynthesis.cancel();
-    setIsRunning(false); setStatus('idle'); setTranscript('');
+    setIsRunning(false); setStatus('idle');
   }, []);
 
   // ── Text send ────────────────────────────────────────────────────────────────
@@ -172,239 +213,235 @@ export default function DoraemonAgent() {
   const onKey = e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendText(); } };
 
   // ── Chip click ───────────────────────────────────────────────────────────────
-  const onChip = (msg) => { setTextInput(msg); inputRef.current?.focus(); sendToAgent(msg); };
+  const onChip = msg => { sendToAgent(msg); };
 
   // ── Task CRUD ────────────────────────────────────────────────────────────────
-  const deleteTask = async id => { await fetch(`${API}/todo/delete/${id}`, { method: 'DELETE' }); fetchData(); };
-  const openAdd    = () => { setModalMode('add'); setModalText(''); setEditingTask(null); setShowModal(true); };
-  const openEdit   = t  => { setModalMode('edit'); setModalText(t.text); setEditingTask(t); setShowModal(true); };
+  const deleteTask  = async id => { await fetch(`${API}/todo/delete/${id}`, { method: 'DELETE' }); fetchData(); };
+  const openAdd     = () => { setModalMode('add'); setModalText(''); setEditingTask(null); setShowModal(true); };
+  const openEdit    = t  => { setModalMode('edit'); setModalText(t.text); setEditingTask(t); setShowModal(true); };
   const submitModal = async () => {
     if (!modalText.trim()) return;
     if (modalMode === 'add') {
       await fetch(`${API}/todo/add`, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ task: modalText.trim() }) });
-      addLog('system', `Task added: "${modalText.trim()}"`);
     } else {
       await fetch(`${API}/todo/update/${editingTask.id}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ task: modalText.trim() }) });
-      addLog('system', `Task updated: "${modalText.trim()}"`);
     }
     setShowModal(false); setModalText(''); setEditingTask(null); fetchData();
   };
 
-  useEffect(() => () => { shouldStopRef.current = true; recognitionRef.current?.abort(); window.speechSynthesis.cancel(); }, []);
+  useEffect(() => () => {
+    shouldStopRef.current = true;
+    recognitionRef.current?.abort();
+    window.speechSynthesis.cancel();
+  }, []);
 
-  // ── Status helpers ───────────────────────────────────────────────────────────
-  const statusConfig = {
-    idle:      { label: 'Ready',        icon: '●', color: '#94a3b8' },
-    listening: { label: 'Listening...', icon: '🎤', color: '#3b82f6' },
-    thinking:  { label: 'Thinking...',  icon: '💭', color: '#f59e0b' },
-    speaking:  { label: 'Speaking...',  icon: '🔊', color: '#10b981' },
-  };
-  const sc = statusConfig[status];
+  const isEmpty = messages.length === 0;
+
+  // ── Status label ─────────────────────────────────────────────────────────────
+  const statusLabel = { idle: null, listening: 'Listening...', thinking: 'Thinking...', speaking: 'Speaking...' }[status];
 
   return (
-    <div className="da-root">
+    <div className="app-root">
 
-      {/* ── HEADER ──────────────────────────────────────────────────── */}
-      <header className="da-header">
-        <div className="da-header-brand">
-          <div className="da-header-avatar">
+      {/* ── TOPBAR ──────────────────────────────────────────────────── */}
+      <header className="topbar">
+        <div className="topbar-brand">
+          <div className="topbar-logo">
             <img src={AVATAR_SRC} alt="Doraemon" />
           </div>
           <div>
-            <div className="da-header-name">Doraemon</div>
-            <div className="da-header-sub">AI Voice Assistant</div>
+            <div className="topbar-name">Doraemon AI</div>
+            <div className="topbar-sub">Voice Assistant</div>
           </div>
         </div>
-        <div className="da-header-right">
-          <div className="da-mode-badge">
-            <span className="da-mode-dot"></span>
-            {agentMode === 'llm_powered' ? 'LLM Mode' : agentMode === 'rule_based' ? 'Rule-Based' : '...'}
+
+        <div className="topbar-right">
+          {statusLabel && (
+            <div className={`status-indicator status-${status}`}>
+              {status === 'listening' && <span className="eq-bars"><b/><b/><b/><b/><b/></span>}
+              {status === 'thinking'  && <span className="spin-dot">◌</span>}
+              {status === 'speaking'  && <span className="wave-dot">🔊</span>}
+              {statusLabel}
+            </div>
+          )}
+          <div className="mode-pill">
+            <span className="mode-dot" />
+            {agentMode === 'llm_powered' ? '⚡ LLM Mode' : '📋 Rule-Based'}
           </div>
-          <button className="da-settings-btn" onClick={() => setShowSettings(s => !s)}>
-            ⚙ Settings
+          <button className="icon-btn" onClick={() => setSidebarOpen(o => !o)} title="Toggle sidebar">
+            ☰
           </button>
         </div>
       </header>
 
-      {/* ── MAIN LAYOUT ─────────────────────────────────────────────── */}
-      <div className="da-layout">
+      {/* ── BODY ────────────────────────────────────────────────────── */}
+      <div className="body-wrap">
 
-        {/* ── CENTER PANEL ──────────────────────────────────────────── */}
-        <main className="da-center">
+        {/* ── CHAT AREA ───────────────────────────────────────────── */}
+        <main className="chat-area">
 
-          {/* Avatar */}
-          <div className={`da-avatar-wrap ${status}`}>
-            <div className="da-avatar-ring"></div>
-            <div className="da-avatar-ring da-ring2"></div>
-            <div className="da-avatar-circle">
-              <img src={AVATAR_SRC} alt="Doraemon" className="da-avatar-img" />
-            </div>
-          </div>
-
-          {/* Status indicator */}
-          <div className="da-status-pill" style={{ color: sc.color, borderColor: sc.color + '40', background: sc.color + '12' }}>
-            {status === 'listening' && <span className="da-eq"><span/><span/><span/><span/><span/></span>}
-            {status === 'thinking'  && <span className="da-spin">◌</span>}
-            {status === 'speaking'  && <span className="da-bounce">🔊</span>}
-            {status === 'idle'      && <span>●</span>}
-            &nbsp;{sc.label}
-          </div>
-
-          {/* Agent reply bubble */}
-          {agentReply && (
-            <div className="da-reply-bubble">
-              <span className="da-reply-icon">🤖</span>
-              <span className="da-reply-text">{agentReply}</span>
+          {/* Empty state — shown before any messages */}
+          {isEmpty && (
+            <div className="empty-state">
+              <div className={`hero-avatar status-${status}`}>
+                <div className="hero-ring" />
+                <div className="hero-ring hero-ring2" />
+                <div className="hero-circle">
+                  <img src={AVATAR_SRC} alt="Doraemon" />
+                </div>
+              </div>
+              <h2 className="empty-title">Hi, I'm Doraemon</h2>
+              <p className="empty-sub">Your AI voice assistant. Ask me anything or try a suggestion below.</p>
+              <div className="chip-grid">
+                {SUGGESTIONS.map((s, i) => (
+                  <button key={i} className="chip" onClick={() => onChip(s.msg)}>
+                    <span className="chip-icon">{s.icon}</span>
+                    <span>{s.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
-          {/* Transcript */}
-          {transcript && (
-            <div className="da-transcript">
-              <span className="da-transcript-icon">🎤</span>
-              <span>{transcript}</span>
+          {/* Chat thread */}
+          {!isEmpty && (
+            <div className="chat-thread">
+              {messages.map(msg => (
+                <MessageBubble key={msg.id} msg={msg} />
+              ))}
+              <div ref={bottomRef} />
             </div>
           )}
 
-          {/* Suggestion chips */}
-          <div className="da-chips">
+        </main>
+
+        {/* ── SIDEBAR ─────────────────────────────────────────────── */}
+        {sidebarOpen && (
+          <aside className="sidebar">
+
+            {/* Tasks */}
+            <div className="sb-card">
+              <div className="sb-card-head">
+                <span>✅</span>
+                <span className="sb-card-title">Tasks</span>
+                <span className="sb-badge">{todos.length}</span>
+                <button className="sb-add" onClick={openAdd}>+</button>
+              </div>
+              {todos.length === 0 ? (
+                <div className="sb-empty">No tasks yet</div>
+              ) : (
+                <div className="sb-list">
+                  {todos.map(t => (
+                    <div key={t.id} className="sb-item">
+                      <span className="sb-dot" />
+                      <span className="sb-item-text">{t.text}</span>
+                      <div className="sb-item-actions">
+                        <button onClick={() => openEdit(t)}>✎</button>
+                        <button onClick={() => deleteTask(t.id)}>✕</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Memory */}
+            <div className="sb-card">
+              <div className="sb-card-head">
+                <span>🧠</span>
+                <span className="sb-card-title">Memory</span>
+                <span className="sb-badge">{memories.length}</span>
+              </div>
+              {memories.length === 0 ? (
+                <div className="sb-empty">Say "remember..."</div>
+              ) : (
+                <div className="sb-list">
+                  {memories.map(m => (
+                    <div key={m.id} className="sb-mem-item">
+                      <span className="sb-mem-dot">◆</span>
+                      <span>{m.content}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+          </aside>
+        )}
+      </div>
+
+      {/* ── BOTTOM INPUT BAR ────────────────────────────────────────── */}
+      <div className="input-dock">
+        {/* Chips shown above input when chat is active */}
+        {!isEmpty && (
+          <div className="input-chips">
             {SUGGESTIONS.map((s, i) => (
-              <button key={i} className="da-chip" onClick={() => onChip(s.msg)}>
+              <button key={i} className="chip chip--sm" onClick={() => onChip(s.msg)}>
                 <span>{s.icon}</span> {s.label}
               </button>
             ))}
           </div>
+        )}
 
-          {/* Floating input bar */}
-          <div className="da-input-bar">
-            <button
-              className={`da-mic-btn ${isRunning ? 'active' : ''}`}
-              onClick={isRunning ? stopConversation : startConversation}
-              title={isRunning ? 'Stop' : 'Start voice'}
-            >
-              {isRunning ? '⏹' : '🎤'}
-            </button>
-            <input
-              ref={inputRef}
-              type="text"
-              className="da-input"
-              placeholder="Message Doraemon..."
-              value={textInput}
-              onChange={e => setTextInput(e.target.value)}
-              onKeyDown={onKey}
-            />
-            <button className="da-send-btn" onClick={sendText} disabled={!textInput.trim()}>
-              ➤
-            </button>
-          </div>
+        <div className="input-bar">
+          {/* Mic button */}
+          <button
+            className={`mic-btn ${isRunning ? 'mic-btn--active' : ''}`}
+            onClick={isRunning ? stopConversation : startConversation}
+            title={isRunning ? 'Stop listening' : 'Start voice'}
+          >
+            {isRunning
+              ? <span className="mic-eq"><b/><b/><b/><b/><b/></span>
+              : <svg viewBox="0 0 24 24" fill="currentColor" width="20" height="20">
+                  <path d="M12 1a4 4 0 0 1 4 4v6a4 4 0 0 1-8 0V5a4 4 0 0 1 4-4zm-1 17.93V21h2v-2.07A8.001 8.001 0 0 0 20 11h-2a6 6 0 0 1-12 0H4a8.001 8.001 0 0 0 7 7.93z"/>
+                </svg>
+            }
+          </button>
 
-        </main>
+          {/* Text input */}
+          <input
+            ref={inputRef}
+            type="text"
+            className="chat-input"
+            placeholder="Message Doraemon..."
+            value={textInput}
+            onChange={e => setTextInput(e.target.value)}
+            onKeyDown={onKey}
+          />
 
-        {/* ── RIGHT SIDEBAR ─────────────────────────────────────────── */}
-        <aside className="da-sidebar">
-
-          {/* Tasks */}
-          <div className="da-card">
-            <div className="da-card-header">
-              <span className="da-card-icon">✅</span>
-              <span className="da-card-title">TASKS</span>
-              <span className="da-card-count">{todos.length}</span>
-              <button className="da-add-btn" onClick={openAdd}>+</button>
-            </div>
-            {todos.length === 0 ? (
-              <div className="da-empty">
-                <span className="da-empty-icon">📋</span>
-                <span>No tasks yet</span>
-              </div>
-            ) : (
-              <div className="da-task-list">
-                {todos.map(t => (
-                  <div key={t.id} className="da-task-item">
-                    <span className="da-task-dot"></span>
-                    <span className="da-task-text">{t.text}</span>
-                    <div className="da-task-btns">
-                      <button onClick={() => openEdit(t)} title="Edit">✎</button>
-                      <button onClick={() => deleteTask(t.id)} title="Delete">✕</button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Memory */}
-          <div className="da-card">
-            <div className="da-card-header">
-              <span className="da-card-icon">🧠</span>
-              <span className="da-card-title">MEMORY</span>
-              <span className="da-card-count">{memories.length}</span>
-            </div>
-            {memories.length === 0 ? (
-              <div className="da-empty">
-                <span className="da-empty-icon">💭</span>
-                <span>Say "remember..."</span>
-              </div>
-            ) : (
-              <div className="da-memory-list">
-                {memories.map(m => (
-                  <div key={m.id} className="da-memory-item">
-                    <span className="da-memory-dot">◆</span>
-                    <span>{m.content}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {/* Conversation log */}
-          <div className="da-card da-card-log">
-            <div className="da-card-header">
-              <span className="da-card-icon">💬</span>
-              <span className="da-card-title">CONVERSATION</span>
-            </div>
-            {log.length === 0 ? (
-              <div className="da-empty">
-                <span className="da-empty-icon">🗨️</span>
-                <span>Chat will appear here</span>
-              </div>
-            ) : (
-              <div className="da-log-list">
-                {log.map(e => (
-                  <div key={e.id} className={`da-log-item da-log-${e.role}`}>
-                    <span className="da-log-avatar">
-                      {e.role === 'user' ? 'U' : e.role === 'agent' ? 'D' : '⚙'}
-                    </span>
-                    <span className="da-log-text">{e.text}</span>
-                  </div>
-                ))}
-                <div ref={logEndRef} />
-              </div>
-            )}
-          </div>
-
-        </aside>
+          {/* Send button */}
+          <button
+            className="send-btn"
+            onClick={sendText}
+            disabled={!textInput.trim()}
+          >
+            <svg viewBox="0 0 24 24" fill="currentColor" width="18" height="18">
+              <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+            </svg>
+          </button>
+        </div>
       </div>
 
       {/* ── TASK MODAL ──────────────────────────────────────────────── */}
       {showModal && (
-        <div className="da-modal-overlay" onClick={() => setShowModal(false)}>
-          <div className="da-modal" onClick={e => e.stopPropagation()}>
-            <div className="da-modal-header">
+        <div className="modal-overlay" onClick={() => setShowModal(false)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()}>
+            <div className="modal-head">
               <h3>{modalMode === 'add' ? '➕ Add Task' : '✎ Edit Task'}</h3>
               <button onClick={() => setShowModal(false)}>✕</button>
             </div>
             <input
-              className="da-modal-input"
+              className="modal-inp"
               placeholder="Task description..."
               value={modalText}
               onChange={e => setModalText(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && submitModal()}
               autoFocus
             />
-            <div className="da-modal-footer">
-              <button className="da-modal-cancel" onClick={() => setShowModal(false)}>Cancel</button>
-              <button className="da-modal-ok" onClick={submitModal} disabled={!modalText.trim()}>
-                {modalMode === 'add' ? 'Add' : 'Update'}
+            <div className="modal-foot">
+              <button className="modal-cancel" onClick={() => setShowModal(false)}>Cancel</button>
+              <button className="modal-ok" onClick={submitModal} disabled={!modalText.trim()}>
+                {modalMode === 'add' ? 'Add Task' : 'Update'}
               </button>
             </div>
           </div>
