@@ -324,17 +324,6 @@ Create `.env` files if needed:
 - `backend/.env` - Backend config
 - `frontend/.env` - Frontend config (API URL)
 
-## 📄 License
-
-This project is open source and available for educational purposes.
-
-## 🤝 Contributing
-
-Feel free to submit issues and enhancement requests!
-
-## 👨‍💻 Author
-
-Built with ❤️ by a Senior Full-Stack AI Engineer
 
 ---
 
