@@ -34,6 +34,18 @@ def process_message(message: str) -> dict:
             "data": None
         }
 
+    # ── PRESETS ───────────────────────────────────────────────────────────────
+    if "preset" in msg:
+        todo_service.add_todo("Repair the Time Machine")
+        todo_service.add_todo("Buy Dorayaki for the party")
+        todo_service.add_todo("Help Nobita with math homework")
+        memory_service.save_memory("I must remember to hide my gadgets from Gian")
+        return {
+            "type": "chat",
+            "response": "I've loaded your Doraemon-themed presets! Check your sidebar.",
+            "data": {"action": "preset_loaded"}
+        }
+
     # ── TO-DO: ADD ─────────────────────────────────────────────────────────────
     for kw in ["add task", "add todo", "create task", "remind me to", "new task"]:
         if kw in msg:

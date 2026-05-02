@@ -3,9 +3,11 @@ Agent Routes — Doraemon's main chat endpoint.
 Automatically uses Groq LLM when GROQ_API_KEY is set, falls back to rule-based.
 """
 import os
-from fastapi import APIRouter
+import httpx
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from services import agent_service
+import logging
 
 router = APIRouter()
 
@@ -49,3 +51,29 @@ def get_mode():
         "active_mode": "llm" if has_groq else "rule_based",
         "model": "llama-3.3-70b-versatile" if has_groq else "pattern_matching"
     }
+
+@router.get("/token")
+async def get_openai_token():
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(status_code=500, detail="OPENAI_API_KEY not set in backend .env")
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.openai.com/v1/realtime/sessions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "gpt-4o-realtime-preview-2024-10-01",
+                    "voice": "alloy",
+                },
+                timeout=15.0
+            )
+            response.raise_for_status()
+            return response.json()
+    except Exception as e:
+        print(f"Error fetching OpenAI token: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

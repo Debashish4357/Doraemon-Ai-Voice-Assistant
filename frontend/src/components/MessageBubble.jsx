@@ -33,7 +33,7 @@ const MessageBubble = memo(({ msg, avatar }) => {
               <span className="w-1.5 h-1.5 bg-slate-400 rounded-full animate-bounce [animation-delay:0.4s]" />
             </div>
           ) : (
-            msg.text
+            msg.text?.replace(/<function=.*?>.*?<\/function>/gs, '').trim()
           )}
         </div>
 

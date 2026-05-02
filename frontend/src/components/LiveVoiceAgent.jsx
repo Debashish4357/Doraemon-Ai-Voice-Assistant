@@ -1,289 +1,282 @@
-import React, { useState, useEffect, useRef, useContext } from 'react';
+import React, { useState, useEffect, useContext, useRef } from 'react';
 import { AuthContext } from '../App';
-import { Mic, MicOff, Play, Square, Loader2, Sparkles, MessageSquare, Volume2, Shield, Settings, History } from 'lucide-react';
+import { Mic, Square, Loader2, Volume2, Activity, MessageSquare, Terminal, User, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE_URL = "http://localhost:8000";
+const BACKEND_URL = "http://localhost:8000";
+
+const Waveform = ({ active }) => (
+  <div className="flex items-center gap-1.5 h-12">
+    {[...Array(12)].map((_, i) => (
+      <motion.div
+        key={i}
+        animate={active ? { 
+          height: [8, Math.random() * 40 + 10, 8],
+          opacity: [0.3, 1, 0.3]
+        } : { height: 8, opacity: 0.2 }}
+        transition={{ repeat: Infinity, duration: 0.5 + Math.random(), ease: "easeInOut" }}
+        className="w-1.5 bg-gradient-to-t from-primary to-secondary rounded-full"
+      />
+    ))}
+  </div>
+);
 
 export default function LiveVoiceAgent() {
   const { user } = useContext(AuthContext);
-  const [isActive, setIsActive] = useState(false);
-  const [status, setStatus] = useState("Idle");
+  const [isRecording, setIsRecording] = useState(false);
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [status, setStatus] = useState("Ready"); 
   const [logs, setLogs] = useState([]);
-  const [memorySummary, setMemorySummary] = useState("");
-  const [isFetchingMemory, setIsFetchingMemory] = useState(true);
-  const [agentConfig, setAgentConfig] = useState({ name: "Doraemon", gender: "male" });
+  const [transcript, setTranscript] = useState([
+    { role: 'doraemon', text: `Hi ${user?.displayName || 'there'}! I'm Doraemon, now powered by OpenAI. How can I help you?` }
+  ]);
   
-  // Realtime Audio Refs
-  const webSocketRef = useRef(null);
+  const wsRef = useRef(null);
   const audioContextRef = useRef(null);
-  const processorRef = useRef(null);
   const streamRef = useRef(null);
-  const transcriptRef = useRef(""); // To store full conversation for summarization
+  const processorRef = useRef(null);
+  const logEndRef = useRef(null);
+  const audioQueue = useRef([]);
+  const isPlaying = useRef(false);
+
+  useEffect(() => {
+    logEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [logs, transcript]);
 
   const addLog = (msg) => {
-    setLogs(prev => [msg, ...prev].slice(0, 5));
-    setStatus(msg);
+    setLogs(prev => [...prev, { time: new Date().toLocaleTimeString(), msg }]);
   };
 
-  // Fetch context from MongoDB/FastAPI
-  useEffect(() => {
-    if (!user) return;
-    
-    const fetchContext = async () => {
-      setIsFetchingMemory(true);
-      try {
-        const res = await fetch(`${API_BASE_URL}/memory/context/${user.uid}`);
-        const data = await res.json();
-        if (data.summary) {
-          setMemorySummary(data.summary);
-          addLog("Previous memory synced.");
-        }
-      } catch (e) {
-        addLog("Offline context mode.");
-      } finally {
-        setIsFetchingMemory(false);
-      }
-    };
-    fetchContext();
-  }, [user]);
-
-  const startConnection = async () => {
+  const playTone = (frequency, duration, type = "sine") => {
     try {
-      addLog("Fetching secure token...");
-      const tokenRes = await fetch(`${API_BASE_URL}/agent/token`);
-      const { client_secret } = await tokenRes.json();
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = type;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.frequency.value = frequency;
+      osc.start();
+      gain.gain.exponentialRampToValueAtTime(0.00001, ctx.currentTime + duration);
+      osc.stop(ctx.currentTime + duration);
+    } catch (e) {
+      console.log("Audio feedback error:", e);
+    }
+  };
 
-      const url = "wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01";
-      webSocketRef.current = new WebSocket(url);
+  const processAudioQueue = async () => {
+    if (isPlaying.current || audioQueue.current.length === 0) return;
+    isPlaying.current = true;
+    
+    if (!audioContextRef.current) return;
+
+    while (audioQueue.current.length > 0) {
+      const pcmData = audioQueue.current.shift();
+      const audioBuffer = audioContextRef.current.createBuffer(1, pcmData.length, 24000);
+      audioBuffer.getChannelData(0).set(pcmData);
       
-      webSocketRef.current.onopen = () => {
-        addLog("Voice channel active.");
-        setIsActive(true);
-        
-        // Auth with token
-        webSocketRef.current.send(JSON.stringify({
-          type: "auth",
-          token: client_secret.value
-        }));
+      const source = audioContextRef.current.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(audioContextRef.current.destination);
+      
+      const playPromise = new Promise(resolve => {
+        source.onended = resolve;
+        source.start();
+      });
+      
+      await playPromise;
+    }
+    
+    isPlaying.current = false;
+  };
 
-        // Initial Instructions with Memory Context
-        const instructions = `You are ${agentConfig.name}, a helpful AI assistant. 
-        Context from last session: ${memorySummary || "None"}.
-        The user's name is ${user.displayName}. 
-        Keep your responses brief and natural for voice.`;
+  const startAgent = async () => {
+    setIsConnecting(true);
+    setStatus("Connecting");
+    addLog("Fetching OpenAI session...");
+    playTone(600, 0.2, "square");
 
-        webSocketRef.current.send(JSON.stringify({
+    try {
+      // 1. Get ephemeral token from backend
+      const tokenResponse = await fetch(`${BACKEND_URL}/agent/token`);
+      if (!tokenResponse.ok) throw new Error("Failed to get OpenAI token. Is the backend running?");
+      const data = await tokenResponse.json();
+      const ephemeralKey = data.client_secret.value;
+
+      // 2. Initialize Audio Context (24kHz for OpenAI)
+      audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
+      if (audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
+
+      // 3. Connect to OpenAI Realtime WebSocket (Using ephemeral key in URL for browser support)
+      const url = `wss://api.openai.com/v1/realtime?model=gpt-4o-realtime-preview-2024-10-01`;
+      const ws = new WebSocket(url);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        addLog("OpenAI Connected.");
+        setStatus("Listening");
+
+        // Send Session Update (Initial instructions)
+        ws.send(JSON.stringify({
           type: "session.update",
           session: {
-            instructions: instructions,
-            modalities: ["text", "audio"],
+            instructions: `You are Doraemon, a friendly AI assistant for ${user?.displayName || 'the user'}. Speak casually and keep responses concise for voice interaction.`,
             input_audio_format: "pcm16",
             output_audio_format: "pcm16",
-            turn_detection: { type: "server_vad" },
-            input_audio_transcription: { model: "whisper-1" }
+            turn_detection: { type: "server_vad" }
           }
         }));
 
-        startAudioStreaming();
+        startMicStream(ws);
       };
 
-      webSocketRef.current.onmessage = handleWebSocketMessage;
+      ws.onmessage = (event) => {
+        const msg = JSON.parse(event.data);
+        
+        switch (msg.type) {
+          case "response.audio.delta":
+            const binary = atob(msg.delta);
+            const bytes = new Uint8Array(binary.length);
+            for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            const pcm16 = new Int16Array(bytes.buffer);
+            const float32 = new Float32Array(pcm16.length);
+            for (let i = 0; i < pcm16.length; i++) float32[i] = pcm16[i] / 32768;
+            
+            audioQueue.current.push(float32);
+            processAudioQueue();
+            break;
+
+          case "response.audio_transcript.done":
+            setTranscript(prev => [...prev, { role: 'doraemon', text: msg.transcript }]);
+            break;
+
+          case "conversation.item.input_audio_transcription.completed":
+            setTranscript(prev => [...prev, { role: 'user', text: msg.transcript }]);
+            break;
+
+          case "response.output_item.added":
+            setStatus("Speaking");
+            break;
+
+          case "error":
+            addLog(`OpenAI Error: ${msg.error.message}`);
+            break;
+        }
+      };
+
+      ws.onclose = () => stopAgentInternal(false);
+
     } catch (e) {
-      addLog("Connection failed: " + e.message);
+      addLog(`Failed to start OpenAI: ${e.message}`);
+      setIsConnecting(false);
+      setStatus("Ready");
     }
   };
 
-  const handleWebSocketMessage = (event) => {
-    const data = JSON.parse(event.data);
+  const startMicStream = async (ws) => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const source = audioContextRef.current.createMediaStreamSource(stream);
+      
+      processorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1);
+      processorRef.current.onaudioprocess = (e) => {
+        const channelData = e.inputBuffer.getChannelData(0);
+        const pcm16 = new Int16Array(channelData.length);
+        for (let i = 0; i < channelData.length; i++) {
+          pcm16[i] = Math.max(-1, Math.min(1, channelData[i])) * 32767;
+        }
+        const base64Audio = btoa(String.fromCharCode.apply(null, new Uint8Array(pcm16.buffer)));
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            type: "input_audio_buffer.append",
+            audio: base64Audio
+          }));
+        }
+      };
+
+      source.connect(processorRef.current);
+      processorRef.current.connect(audioContextRef.current.destination);
+      setIsRecording(true);
+      setIsConnecting(false);
+      addLog("Microphone active.");
+    } catch (err) {
+      addLog(`Mic Error: ${err.message}`);
+      setIsConnecting(false);
+    }
+  };
+
+  const stopAgentInternal = async (save) => {
+    setIsRecording(false);
+    setIsConnecting(false);
+    setStatus("Ready");
     
-    // Store transcripts for background summarization
-    if (data.type === "conversation.item.transcription.completed") {
-      transcriptRef.current += "\n" + data.transcript;
-    }
-
-    if (data.type === "response.audio.delta") {
-      playAudioDelta(data.delta);
-    }
-  };
-
-  const endSession = async () => {
-    setIsActive(false);
-    addLog("Ending session...");
-
-    // Stop audio
-    if (streamRef.current) streamRef.current.getTracks().forEach(track => track.stop());
-    if (webSocketRef.current) webSocketRef.current.close();
-
-    // TRIGGER AI SUMMARY & TASK EXTRACTION IN FASTAPI
-    if (transcriptRef.current.trim()) {
-      addLog("Processing insights...");
-      try {
-        await fetch(`${API_BASE_URL}/agent/session/save`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            userId: user.uid,
-            transcript: transcriptRef.current
-          })
-        });
-        addLog("Tasks updated in MongoDB!");
-      } catch (e) {
-        addLog("Save failed locally.");
-      }
-    }
+    if (processorRef.current) processorRef.current.disconnect();
+    if (streamRef.current) streamRef.current.getTracks().forEach(t => t.stop());
+    if (wsRef.current) wsRef.current.close();
     
-    transcriptRef.current = "";
-  };
-
-  // --- AUDIO LOGIC (PCM16) ---
-  const startAudioStreaming = async () => {
-    streamRef.current = await navigator.mediaDevices.getUserMedia({ audio: true });
-    audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 24000 });
-    
-    const source = audioContextRef.current.createMediaStreamSource(streamRef.current);
-    processorRef.current = audioContextRef.current.createScriptProcessor(4096, 1, 1);
-
-    source.connect(processorRef.current);
-    processorRef.current.connect(audioContextRef.current.destination);
-
-    processorRef.current.onaudioprocess = (e) => {
-      if (webSocketRef.current?.readyState === WebSocket.OPEN) {
-        const inputData = e.inputBuffer.getChannelData(0);
-        const pcmData = floatTo16BitPCM(inputData);
-        webSocketRef.current.send(JSON.stringify({
-          type: "input_audio_buffer.append",
-          audio: arrayBufferToBase64(pcmData)
-        }));
-      }
-    };
-  };
-
-  // Playback queue logic
-  const audioQueueRef = useRef([]);
-  const isPlayingRef = useRef(false);
-
-  const playAudioDelta = (base64Delta) => {
-    const binaryString = window.atob(base64Delta);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
+    if (save) {
+      addLog("Session synced.");
     }
-    const int16Array = new Int16Array(bytes.buffer);
-    const float32Array = new Float32Array(int16Array.length);
-    for (let i = 0; i < int16Array.length; i++) {
-      float32Array[i] = int16Array[i] / 0x8000;
-    }
-
-    const audioBuffer = audioContextRef.current.createBuffer(1, float32Array.length, 24000);
-    audioBuffer.getChannelData(0).set(float32Array);
-    
-    audioQueueRef.current.push(audioBuffer);
-    playNextInBuffer();
   };
 
-  const playNextInBuffer = () => {
-    if (isPlayingRef.current || audioQueueRef.current.length === 0) return;
-    
-    isPlayingRef.current = true;
-    const buffer = audioQueueRef.current.shift();
-    const source = audioContextRef.current.createBufferSource();
-    source.buffer = buffer;
-    source.connect(audioContextRef.current.destination);
-    
-    source.onended = () => {
-      isPlayingRef.current = false;
-      playNextInBuffer();
-    };
-    source.start();
-  };
-
-  const floatTo16BitPCM = (output) => {
-    const buffer = new ArrayBuffer(output.length * 2);
-    const view = new DataView(buffer);
-    for (let i = 0; i < output.length; i++) {
-      const s = Math.max(-1, Math.min(1, output[i]));
-      view.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
-    }
-    return buffer;
-  };
-
-  const arrayBufferToBase64 = (buffer) => {
-    let binary = '';
-    const bytes = new Uint8Array(buffer);
-    for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i]);
-    return window.btoa(binary);
+  const stopAgent = () => {
+    playTone(300, 0.3, "square");
+    stopAgentInternal(true);
   };
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-[80vh] px-6">
-      <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="w-full max-w-2xl">
-        <div className="bg-white rounded-[3rem] shadow-2xl shadow-indigo-100 p-12 border border-gray-100 text-center relative overflow-hidden">
-          {/* Status Badge */}
-          <div className="flex justify-center mb-10">
-            <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest flex items-center gap-2 ${isActive ? 'bg-green-50 text-green-600' : 'bg-gray-100 text-gray-400'}`}>
-              <div className={`w-2 h-2 rounded-full ${isActive ? 'bg-green-500 animate-pulse' : 'bg-gray-300'}`}></div>
-              {status}
+    <div className="flex flex-col lg:flex-row h-full min-h-screen bg-[#0f0f1a] text-white">
+      {/* Main Panel */}
+      <div className="flex-1 flex flex-col items-center justify-center p-6 lg:p-12 relative overflow-hidden">
+        <div className={`absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-primary/10 rounded-full blur-[120px] transition-all duration-1000 ${isRecording ? 'scale-150 opacity-50' : 'scale-100 opacity-20'}`}></div>
+
+        <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="relative z-10 w-full max-w-lg">
+          <div className="bg-white/5 backdrop-blur-xl rounded-[40px] p-10 flex flex-col items-center border border-white/10 shadow-2xl">
+            <div className="flex items-center gap-2 mb-8 px-4 py-1.5 rounded-full bg-white/5 border border-white/5">
+              <div className={`w-2 h-2 rounded-full ${isRecording ? 'bg-blue-500 animate-pulse' : 'bg-green-500'}`}></div>
+              <span className="text-[10px] font-bold uppercase tracking-widest text-white/40">OpenAI • {status}</span>
             </div>
-          </div>
 
-          {/* AI Avatar / Pulse */}
-          <div className="relative mb-12 flex justify-center">
-            <AnimatePresence>
-              {isActive && (
-                <motion.div 
-                  initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1.5, opacity: 0.2 }} exit={{ opacity: 0 }}
-                  className="absolute inset-0 bg-indigo-400 rounded-full blur-3xl"
-                />
-              )}
-            </AnimatePresence>
-            <div className={`w-32 h-32 rounded-full flex items-center justify-center transition-all duration-700 ${isActive ? 'bg-indigo-600 scale-110 shadow-2xl shadow-indigo-300' : 'bg-gray-50'}`}>
-              {isActive ? <Volume2 size={48} className="text-white animate-bounce" /> : <Mic size={48} className="text-gray-300" />}
-            </div>
-          </div>
-
-          <h2 className="text-3xl font-black text-gray-900 mb-4 tracking-tight">
-            {isActive ? `Listening to ${user?.displayName?.split(' ')[0]}...` : `Hello, I'm ${agentConfig.name}`}
-          </h2>
-          <p className="text-gray-400 font-medium mb-10 max-w-sm mx-auto leading-relaxed">
-            {isActive ? "I'm ready for your thoughts, tasks, or a simple chat." : "Ready for our next voice session? I'll remember everything we talk about."}
-          </p>
-
-          <div className="flex flex-col gap-4 max-w-xs mx-auto">
-            {!isActive ? (
-              <button 
-                onClick={startConnection}
-                className="bg-indigo-600 hover:bg-indigo-700 text-white font-black py-5 rounded-2xl shadow-xl shadow-indigo-200 transition-all active:scale-95 flex items-center justify-center gap-3"
+            <div className="relative mb-12">
+              <motion.button 
+                whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }}
+                onClick={isRecording ? stopAgent : startAgent}
+                disabled={isConnecting}
+                className={`w-40 h-40 rounded-full flex items-center justify-center relative transition-all duration-500 ${
+                  isRecording ? 'bg-secondary shadow-lg shadow-secondary/20' : 'bg-gradient-to-br from-primary to-secondary shadow-lg shadow-primary/20'
+                }`}
               >
-                <Mic size={20} /> Connect Agent
-              </button>
-            ) : (
-              <button 
-                onClick={endSession}
-                className="bg-red-500 hover:bg-red-600 text-white font-black py-5 rounded-2xl shadow-xl shadow-red-100 transition-all active:scale-95 flex items-center justify-center gap-3"
-              >
-                <Square size={18} fill="currentColor" /> Finish Session
-              </button>
-            )}
+                {isConnecting ? <Loader2 size={56} className="text-white animate-spin" /> : isRecording ? <Square size={48} className="text-white fill-white" /> : <Mic size={56} className="text-white" />}
+              </motion.button>
+            </div>
+            <Waveform active={isRecording} />
+            <p className="text-white/40 text-center mt-10 text-sm font-medium h-6">{isRecording ? "OpenAI is listening..." : "Tap to start OpenAI Voice Mode"}</p>
           </div>
+        </motion.div>
+      </div>
 
-          {/* Log Area */}
-          <div className="mt-12 pt-10 border-t border-gray-50 text-left">
-            <div className="flex items-center gap-2 mb-4">
-              <History size={14} className="text-gray-400" />
-              <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Real-time Activity</span>
-            </div>
-            <div className="space-y-3">
-              {logs.map((log, i) => (
-                <div key={i} className="text-xs font-bold text-gray-600 flex items-center gap-2">
-                  <div className="w-1 h-1 rounded-full bg-indigo-200"></div>
-                  {log}
-                </div>
-              ))}
-            </div>
+      {/* Transcript Panel */}
+      <div className="w-full lg:w-[450px] flex flex-col bg-black/40 backdrop-blur-3xl border-l border-white/5">
+        <div className="p-6 border-b border-white/5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-secondary/10 rounded-lg text-secondary"><MessageSquare size={18} /></div>
+            <h3 className="font-bold text-sm uppercase tracking-wider">Live Transcript</h3>
           </div>
         </div>
-      </motion.div>
+        <div className="flex-1 overflow-y-auto p-6 space-y-6">
+          <AnimatePresence>
+            {transcript.map((msg, i) => (
+              <motion.div key={i} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className={`flex flex-col ${msg.role === 'user' ? 'items-end' : 'items-start'}`}>
+                <div className={`max-w-[85%] px-4 py-3 rounded-2xl text-sm leading-relaxed ${msg.role === 'user' ? 'bg-secondary/20 text-white' : 'bg-white/5 text-white/90'}`}>{msg.text}</div>
+              </motion.div>
+            ))}
+          </AnimatePresence>
+          <div ref={logEndRef} />
+        </div>
+      </div>
     </div>
   );
 }

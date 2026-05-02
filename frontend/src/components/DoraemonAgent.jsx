@@ -276,8 +276,8 @@ export default function DoraemonAgent() {
                   <div className="w-24 h-24 mb-6 rounded-3xl glass-card flex items-center justify-center animate-pulse-soft">
                     <img src={AVATAR_SRC} alt="Doraemon" className="w-16 h-16 object-contain" />
                   </div>
-                  <h2 className="text-3xl font-bold text-slate-800 mb-2">Hello, I'm Doraemon</h2>
-                  <p className="text-slate-500 max-w-md mb-8">How can I help you today? You can talk to me about tasks, memories, or just chat.</p>
+                  <h2 className="text-3xl font-bold text-slate-900 mb-2 drop-shadow-sm">Hello, I'm Doraemon</h2>
+                  <p className="text-black font-medium max-w-md mb-8">How can I help you today? You can talk to me about tasks, memories, or just chat.</p>
                   
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full max-w-2xl">
                     {SUGGESTIONS.map((s, i) => (
@@ -289,7 +289,7 @@ export default function DoraemonAgent() {
                         <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-500 flex items-center justify-center group-hover:bg-blue-100 transition-colors">
                           {s.icon}
                         </div>
-                        <span className="text-sm font-medium text-slate-700">{s.label}</span>
+                        <span className="text-sm font-semibold text-slate-900">{s.label}</span>
                       </button>
                     ))}
                   </div>
