@@ -13,6 +13,9 @@ DB_NAME = os.getenv("MONGO_DB_NAME", "voice_ai_agent_db")
 client = AsyncIOMotorClient(MONGO_URI)
 database = client[DB_NAME]
 
+async def get_db():
+    return database
+
 async def connect_db():
     try:
         # Check connection
@@ -24,3 +27,4 @@ async def connect_db():
 async def close_db():
     client.close()
     logger.info("MongoDB connection closed")
+

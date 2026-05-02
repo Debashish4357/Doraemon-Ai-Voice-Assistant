@@ -1,134 +1,147 @@
-import React from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Mic, CheckSquare, History, Bookmark, Sparkles, X, ChevronRight } from 'lucide-react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { AuthContext } from '../App';
+import { Mic, CheckSquare, History, Sparkles, ChevronRight, MessageSquare } from 'lucide-react';
+import { motion } from 'framer-motion';
 
-const SidebarItem = ({ to, icon: Icon, label, active, onClick }) => (
+const API_BASE_URL = "http://localhost:8000";
+
+const SidebarItem = ({ to, icon: Icon, label, active }) => (
   <Link 
     to={to} 
-    onClick={onClick}
     className={`flex items-center justify-between p-3.5 rounded-xl transition-all duration-300 group ${
       active 
-        ? 'bg-gradient-to-r from-primary/20 to-secondary/20 border border-white/10 shadow-lg' 
-        : 'hover:bg-white/5 text-white/50 hover:text-white'
+        ? 'bg-indigo-600 shadow-lg shadow-indigo-200 text-white' 
+        : 'hover:bg-gray-100 text-gray-500 hover:text-gray-900'
     }`}
   >
     <div className="flex items-center gap-3">
-      <div className={`p-2 rounded-lg transition-colors ${active ? 'bg-primary text-white neon-glow' : 'bg-white/5 text-white/30 group-hover:bg-white/10'}`}>
+      <div className={`p-2 rounded-lg transition-colors ${active ? 'bg-white/20 text-white' : 'bg-gray-50 text-gray-400 group-hover:bg-white group-hover:text-indigo-600'}`}>
         <Icon size={18} />
       </div>
-      <span className="font-semibold text-sm tracking-wide">{label}</span>
+      <span className="font-semibold text-sm tracking-tight">{label}</span>
     </div>
-    {active && (
-      <motion.div layoutId="active-indicator">
-        <ChevronRight size={16} className="text-primary" />
-      </motion.div>
-    )}
+    {active && <ChevronRight size={16} className="text-white/70" />}
   </Link>
 );
 
-export default function Sidebar({ isOpen, closeSidebar }) {
+export default function Sidebar() {
+  const { user } = useContext(AuthContext);
   const location = useLocation();
+  const [sessions, setSessions] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const history = [
-    { id: 1, title: 'Morning Routine', time: '2h ago' },
-    { id: 2, title: 'Shopping List', time: '5h ago' },
-    { id: 3, title: 'Project Planning', time: 'Yesterday' },
-  ];
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchSessions = async () => {
+      try {
+        const res = await fetch(`${API_BASE_URL}/memory/sessions/${user.uid}`);
+        const data = await res.json();
+        setSessions(data);
+      } catch (e) {
+        console.error(e);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchSessions();
+    const interval = setInterval(fetchSessions, 10000); // Refresh history every 10s
+    return () => clearInterval(interval);
+  }, [user]);
 
   return (
-    <>
-      {/* Mobile Overlay */}
-      <AnimatePresence>
-        {isOpen && (
-          <motion.div 
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={closeSidebar}
-            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] lg:hidden"
-          />
-        )}
-      </AnimatePresence>
+    <aside className="hidden lg:flex w-72 bg-white border-r border-gray-100 flex-col h-full overflow-hidden">
+      {/* Navigation section */}
+      <div className="p-6 space-y-2">
+        <div className="px-3 mb-4 text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">Primary Navigation</div>
+        <SidebarItem 
+          to="/" 
+          icon={Mic} 
+          label="Voice Agent" 
+          active={location.pathname === '/'} 
+        />
+        <SidebarItem 
+          to="/todos" 
+          icon={CheckSquare} 
+          label="Task Manager" 
+          active={location.pathname === '/todos'} 
+        />
+      </div>
 
-      <motion.aside 
-        className={`fixed lg:static inset-y-0 left-0 w-80 glass-dark border-r border-white/5 z-[70] flex flex-col transition-all duration-500 transform lg:translate-x-0 ${
-          isOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}
-      >
-        {/* Header */}
-        <div className="p-6 flex items-center justify-between lg:hidden">
-          <h2 className="text-xl font-bold gradient-text">Menu</h2>
-          <button onClick={closeSidebar} className="p-2 hover:bg-white/5 rounded-lg">
-            <X size={20} />
-          </button>
-        </div>
+      <div className="h-px bg-gray-50 mx-6 my-2"></div>
 
-        {/* Navigation */}
-        <div className="p-4 space-y-2">
-          <div className="px-3 mb-2 text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">Dashboard</div>
-          <SidebarItem 
-            to="/" 
-            icon={Mic} 
-            label="Voice Agent" 
-            active={location.pathname === '/'} 
-            onClick={closeSidebar}
-          />
-          <SidebarItem 
-            to="/todos" 
-            icon={CheckSquare} 
-            label="To-Do List" 
-            active={location.pathname === '/todos'} 
-            onClick={closeSidebar}
-          />
-        </div>
-
-        <div className="h-px bg-white/5 mx-6 my-2"></div>
-
-        {/* Conversation History */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
-          <div>
-            <div className="px-3 mb-3 flex items-center justify-between">
-              <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">Recent Sessions</span>
-              <History size={12} className="text-white/20" />
-            </div>
-            <div className="space-y-1">
-              {history.map((session) => (
-                <button 
-                  key={session.id}
-                  className="w-full text-left px-3 py-2.5 rounded-lg hover:bg-white/5 group transition-all duration-200"
-                >
-                  <div className="text-sm font-medium text-white/70 group-hover:text-white truncate">{session.title}</div>
-                  <div className="text-[10px] text-white/30 mt-0.5">{session.time}</div>
-                </button>
-              ))}
-            </div>
+      {/* Session History */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-8 scrollbar-thin scrollbar-thumb-gray-200">
+        <div>
+          <div className="px-3 mb-5 flex items-center justify-between">
+            <span className="text-[10px] font-black text-gray-400 uppercase tracking-[0.2em]">MongoDB History</span>
+            <History size={14} className="text-gray-300" />
           </div>
-
-          <div>
-            <div className="px-3 mb-3 flex items-center justify-between">
-              <span className="text-[10px] font-bold text-white/20 uppercase tracking-[0.2em]">Saved Insights</span>
-              <Bookmark size={12} className="text-white/20" />
-            </div>
-            <div className="p-4 rounded-xl bg-gradient-to-br from-white/5 to-white/[0.02] border border-white/5">
-              <div className="flex items-center gap-2 mb-2">
-                <Sparkles size={14} className="text-yellow-500" />
-                <span className="text-xs font-bold text-white/90">Daily Tip</span>
+          
+          <div className="space-y-3">
+            {loading ? (
+              <div className="px-3 space-y-4">
+                {[1, 2, 3].map(i => (
+                  <div key={i} className="h-10 bg-gray-50 rounded-lg animate-pulse" />
+                ))}
               </div>
-              <p className="text-[11px] text-white/50 leading-relaxed italic">
-                "Doraemon learns better when you speak naturally. Try sharing your mood today!"
-              </p>
-            </div>
+            ) : sessions.length === 0 ? (
+              <div className="px-3 py-8 text-center border-2 border-dashed border-gray-50 rounded-2xl">
+                <MessageSquare size={24} className="text-gray-200 mx-auto mb-2" />
+                <p className="text-[11px] text-gray-400 font-medium">No sessions saved yet</p>
+              </div>
+            ) : (
+              sessions.map((session) => (
+                <div 
+                  key={session.id}
+                  className="w-full text-left px-4 py-3 rounded-2xl hover:bg-gray-50 group transition-all cursor-default border border-transparent hover:border-gray-100"
+                >
+                  <div className="text-xs font-bold text-gray-700 group-hover:text-indigo-600 truncate mb-1">
+                    {session.summary || "New Conversation"}
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-gray-400 font-medium italic">
+                      {new Date(session.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                    {session.processed && (
+                      <span className="text-[9px] bg-green-50 text-green-600 px-1.5 py-0.5 rounded-full font-bold uppercase tracking-tighter">Analyzed</span>
+                    )}
+                  </div>
+                </div>
+              ))
+            )}
           </div>
         </div>
 
-        {/* Footer info */}
-        <div className="p-6 text-center">
-          <div className="text-[10px] text-white/10 font-medium tracking-widest uppercase">
-            v2.0.4 Premium
+        {/* Tip Box */}
+        <div className="bg-gradient-to-br from-indigo-50 to-blue-50 rounded-[1.5rem] p-5 border border-indigo-100/50">
+          <div className="flex items-center gap-2 mb-3">
+            <Sparkles size={16} className="text-indigo-500" />
+            <span className="text-[11px] font-black text-indigo-700 uppercase tracking-wider">Local Mode</span>
           </div>
+          <p className="text-xs text-indigo-800/70 leading-relaxed font-medium">
+            Your data is now being saved to MongoDB for free. No credit card required!
+          </p>
         </div>
-      </motion.aside>
-    </>
+      </div>
+
+      {/* Footer */}
+      <div className="p-6 mt-auto">
+        <div className="bg-gray-50 rounded-2xl p-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600 text-xs font-bold">
+              {user?.displayName?.charAt(0)}
+            </div>
+            <div>
+              <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">Active User</p>
+              <p className="text-xs font-bold text-gray-700 truncate max-w-[100px]">{user?.displayName}</p>
+            </div>
+          </div>
+          <div className="w-2 h-2 rounded-full bg-green-500 shadow-sm shadow-green-200"></div>
+        </div>
+      </div>
+    </aside>
   );
 }

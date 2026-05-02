@@ -9,27 +9,24 @@ from groq import Groq
 from services import todo_service, memory_service
 
 # ── System prompt ──────────────────────────────────────────────────────────────
-SYSTEM_PROMPT = """You are Doraemon, a smart and friendly AI assistant.
+SYSTEM_PROMPT = """You are Doraemon, a smart AI assistant.
 
 You can:
-- Manage a To-Do list (add, show, update, delete tasks)
-- Remember important user information
-- Answer conversationally
+1. Manage a To-Do list (add, show, delete tasks)
+2. Remember important user information
+3. Answer conversationally
 
 Rules:
-- Understand user intent from natural language — never rely on exact keywords
-- Call the right tool when the user wants an action
-- Respond naturally and concisely (1-2 sentences max)
-- Do NOT say "I heard you say" or "Try saying"
-- Only greet when user says hi / hello / hey / doraemon
-- After executing a tool, confirm the action clearly
-- If unsure, ask a short clarifying question
+* Understand user intent from natural language
+* Call tools when needed. If the user tells you a fact or asks you to remember something, YOU MUST CALL THE saveMemory TOOL.
+* Respond naturally (no scripted lines)
+* Do NOT say 'I heard you say'
+* Only greet when user says hi/hello/hey/doraemon
+* NEVER speak or show the raw Task ID (numbers) in your response. Just say the task name.
 
-Examples of natural responses:
-- "Done, added 'buy milk' to your tasks."
-- "Here are your tasks: buy milk, call mom."
-- "Got it, I'll remember that."
-- "Removed 'buy milk' from your list."
+Always decide:
+* Should I call a tool?
+* Or respond normally?
 """
 
 # ── Tool definitions for Groq function calling ─────────────────────────────────
@@ -37,15 +34,12 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "add_todo",
-            "description": "Add a new task to the to-do list. Call this when the user wants to add, create, or schedule a task.",
+            "name": "addTodo",
+            "description": "Add a task to the list. Call this when the user says 'add task', 'remind me to', or 'create a to-do'.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "task": {
-                        "type": "string",
-                        "description": "The task description to add"
-                    }
+                    "task": {"type": "string"}
                 },
                 "required": ["task"]
             }
@@ -54,8 +48,8 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "list_todos",
-            "description": "Get all current to-do tasks. Call this when the user asks to see, list, or show their tasks.",
+            "name": "getTodos",
+            "description": "Show all tasks. Call this when the user asks what their tasks are.",
             "parameters": {
                 "type": "object",
                 "properties": {}
@@ -65,63 +59,51 @@ TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "update_todo",
-            "description": "Update an existing task's text. Call this when the user wants to edit, change, or rename a task.",
+            "name": "updateTodo",
+            "description": "Update an existing task's text. Call this to change or rename a task.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "task_id": {
-                        "type": "string",
-                        "description": "The ID of the task to update"
-                    },
-                    "new_text": {
-                        "type": "string",
-                        "description": "The new task description"
-                    }
+                    "id": {"type": "string"},
+                    "new_text": {"type": "string"}
                 },
-                "required": ["task_id", "new_text"]
+                "required": ["id", "new_text"]
             }
         }
     },
     {
         "type": "function",
         "function": {
-            "name": "delete_todo",
-            "description": "Delete a task from the to-do list. Call this when the user wants to remove, delete, or mark a task as done.",
+            "name": "deleteTodo",
+            "description": "Delete a task by ID or name. Call this when the user finishes or removes a task.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "task_id": {
-                        "type": "string",
-                        "description": "The ID of the task to delete"
-                    }
+                    "id": {"type": "string"}
                 },
-                "required": ["task_id"]
+                "required": ["id"]
             }
         }
     },
     {
         "type": "function",
         "function": {
-            "name": "save_memory",
-            "description": "Save important information about the user. Call this when the user shares personal info, preferences, or asks you to remember something.",
+            "name": "saveMemory",
+            "description": "Save important information about the user. CALL THIS TOOL IMMEDIATELY whenever the user says 'remember...', 'my name is', or tells you a fact to keep.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "content": {
-                        "type": "string",
-                        "description": "The information to remember"
-                    }
+                    "text": {"type": "string"}
                 },
-                "required": ["content"]
+                "required": ["text"]
             }
         }
     },
     {
         "type": "function",
         "function": {
-            "name": "get_memories",
-            "description": "Retrieve all stored memories about the user. Call this when the user asks what you remember or recall about them.",
+            "name": "getMemory",
+            "description": "Retrieve all stored memories. Call this when the user asks what you remember or recall.",
             "parameters": {
                 "type": "object",
                 "properties": {}
@@ -134,23 +116,40 @@ TOOLS = [
 def _execute_tool(name: str, args: dict) -> str:
     """Execute a tool call and return a string result for the LLM."""
     try:
-        if name == "add_todo":
-            task = todo_service.add_todo(args["task"])
+        if name == "addTodo":
+            # Handle potential variation in argument naming by LLM
+            task_text = args.get("task") or args.get("text") or args.get("description") or ""
+            if not task_text:
+                return json.dumps({"success": False, "error": "No task text provided"})
+            task = todo_service.add_todo(task_text)
             return json.dumps({"success": True, "task": task})
 
-        elif name == "list_todos":
+        elif name == "getTodos":
             tasks = todo_service.list_todos()
             return json.dumps({"success": True, "tasks": tasks, "count": len(tasks)})
 
-        elif name == "update_todo":
-            updated = todo_service.update_todo(args["task_id"], args["new_text"])
+        elif name == "updateTodo":
+            task_id = args.get("id") or args.get("task_id") or ""
+            new_text = args.get("new_text") or args.get("text") or args.get("task") or ""
+            
+            # Try direct ID
+            updated = todo_service.update_todo(task_id, new_text)
             if updated:
                 return json.dumps({"success": True, "task": updated})
+            
+            # Fallback text match
+            for task in todo_service.list_todos():
+                if task_id.lower() in task["text"].lower():
+                    updated = todo_service.update_todo(task["id"], new_text)
+                    return json.dumps({"success": True, "task": updated})
             return json.dumps({"success": False, "error": "Task not found"})
 
-        elif name == "delete_todo":
+        elif name == "deleteTodo":
             # Support matching by ID or by description text
-            task_id = args["task_id"]
+            task_id = args.get("id") or args.get("task_id") or args.get("task") or ""
+            if not task_id:
+                return json.dumps({"success": False, "error": "No task id provided"})
+            
             # Try direct ID delete first
             if todo_service.delete_todo(task_id):
                 return json.dumps({"success": True, "deleted_id": task_id})
@@ -161,11 +160,14 @@ def _execute_tool(name: str, args: dict) -> str:
                     return json.dumps({"success": True, "deleted_task": task["text"]})
             return json.dumps({"success": False, "error": "Task not found"})
 
-        elif name == "save_memory":
-            mem = memory_service.save_memory(args["content"])
+        elif name == "saveMemory":
+            mem_text = args.get("text") or args.get("content") or args.get("memory") or ""
+            if not mem_text:
+                return json.dumps({"success": False, "error": "No memory text provided"})
+            mem = memory_service.save_memory(mem_text)
             return json.dumps({"success": True, "memory": mem})
 
-        elif name == "get_memories":
+        elif name == "getMemory":
             memories = memory_service.list_memories()
             return json.dumps({"success": True, "memories": memories, "count": len(memories)})
 
@@ -294,9 +296,9 @@ def process_message(message: str, session_id: str = "default") -> dict:
 
     # Determine response type
     rtype = "chat"
-    if any(n in ["add_todo", "list_todos", "update_todo", "delete_todo"] for n in tool_names):
+    if any(n in ["addTodo", "getTodos", "updateTodo", "deleteTodo"] for n in tool_names):
         rtype = "todo"
-    elif any(n in ["save_memory", "get_memories"] for n in tool_names):
+    elif any(n in ["saveMemory", "getMemory"] for n in tool_names):
         rtype = "memory"
 
     return {"type": rtype, "response": reply, "data": {"tools_used": tool_names}}
@@ -322,16 +324,16 @@ def _fallback_response(tool_names: list, tool_messages: list) -> str:
             pass
 
     name = tool_names[0] if tool_names else ""
-    if name == "add_todo":
+    if name == "addTodo":
         return "Done, task added."
-    elif name == "list_todos":
+    elif name == "getTodos":
         return "Here are your tasks."
-    elif name == "update_todo":
+    elif name == "updateTodo":
         return "Task updated."
-    elif name == "delete_todo":
+    elif name == "deleteTodo":
         return "Task removed."
-    elif name == "save_memory":
+    elif name == "saveMemory":
         return "Got it, I'll remember that."
-    elif name == "get_memories":
+    elif name == "getMemory":
         return "Here's what I remember."
     return "Done!"

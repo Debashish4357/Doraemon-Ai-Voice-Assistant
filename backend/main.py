@@ -4,6 +4,8 @@ FastAPI server with CORS, routing, and startup greeting.
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from dotenv import load_dotenv
+load_dotenv()
 from routes import todo, memory, agent
 
 app = FastAPI(

@@ -1,108 +1,165 @@
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { X, Sparkles, User, Save, Mic } from 'lucide-react';
+import React, { useState, useEffect, useContext } from 'react';
+import { AuthContext } from '../App';
+import { db } from '../firebase';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { X, Save, Bot, Loader2 } from 'lucide-react';
 
-export default function CustomizeAgentModal({ isOpen, onClose, currentName = "Doraemon" }) {
-  const [name, setName] = useState(currentName);
-  const [gender, setGender] = useState("friendly");
+export default function CustomizeAgentModal({ onClose }) {
+  const { user } = useContext(AuthContext);
+  const [agentName, setAgentName] = useState('Aria');
+  const [agentGender, setAgentGender] = useState('female');
+  const [saving, setSaving] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [saved, setSaved] = useState(false);
 
-  const handleSave = () => {
-    // In a real app, this would call the backend
-    console.log("Saving agent config:", { name, gender });
-    onClose();
+  // Load saved config from Firestore on mount
+  useEffect(() => {
+    if (!user) return;
+    const loadConfig = async () => {
+      try {
+        const snap = await getDoc(doc(db, 'users', user.uid));
+        if (snap.exists()) {
+          const data = snap.data();
+          if (data.agentName) setAgentName(data.agentName);
+          if (data.agentGender) setAgentGender(data.agentGender);
+        }
+      } catch (e) {
+        console.error('Failed to load agent config:', e);
+      } finally {
+        setLoading(false);
+      }
+    };
+    loadConfig();
+  }, [user]);
+
+  const handleSave = async () => {
+    if (!user) return;
+    setSaving(true);
+    try {
+      await setDoc(doc(db, 'users', user.uid), {
+        agentName: agentName.trim() || 'Aria',
+        agentGender,
+        updatedAt: new Date().toISOString(),
+      }, { merge: true });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      console.error('Failed to save agent config:', e);
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={onClose}
-            className="absolute inset-0 bg-black/80 backdrop-blur-md"
-          />
-          
-          <motion.div
-            initial={{ opacity: 0, scale: 0.9, y: 20 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.9, y: 20 }}
-            className="relative w-full max-w-md glass-dark border border-white/10 rounded-[32px] overflow-hidden shadow-2xl"
-          >
-            {/* Header */}
-            <div className="p-8 pb-0 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-primary/10 rounded-xl text-primary neon-glow">
-                  <Sparkles size={24} />
-                </div>
-                <div>
-                  <h2 className="text-xl font-bold text-white">Customize Agent</h2>
-                  <p className="text-xs text-white/30 font-medium uppercase tracking-widest mt-0.5">Configuration</p>
-                </div>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden border border-gray-100"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 p-6 text-white">
+          <div className="flex justify-between items-center">
+            <div className="flex items-center gap-3">
+              <div className="bg-white/20 p-2 rounded-xl">
+                <Bot size={22} />
               </div>
-              <button 
-                onClick={onClose}
-                className="p-2 hover:bg-white/5 rounded-full text-white/20 hover:text-white transition-colors"
-              >
-                <X size={20} />
-              </button>
+              <div>
+                <h2 className="text-lg font-bold">Customize Agent</h2>
+                <p className="text-blue-100 text-sm">Personalize your AI assistant</p>
+              </div>
             </div>
+            <button
+              onClick={onClose}
+              className="p-2 hover:bg-white/20 rounded-full transition-colors"
+            >
+              <X size={20} />
+            </button>
+          </div>
+        </div>
 
-            {/* Body */}
-            <div className="p-8 space-y-8">
-              <div className="space-y-3">
-                <label className="text-xs font-bold text-white/40 uppercase tracking-[0.2em] ml-1">Agent Identity</label>
-                <div className="relative">
-                  <div className="absolute left-4 top-1/2 -translate-y-1/2 text-white/20">
-                    <User size={18} />
-                  </div>
-                  <input 
-                    type="text" 
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    className="w-full bg-white/5 border border-white/10 rounded-2xl py-4 pl-12 pr-4 text-white focus:outline-none focus:ring-2 focus:ring-primary/50 transition-all font-semibold"
-                    placeholder="Enter agent name..."
-                  />
-                </div>
+        {/* Body */}
+        <div className="p-6 space-y-6">
+          {loading ? (
+            <div className="flex justify-center py-8">
+              <Loader2 size={28} className="animate-spin text-blue-500" />
+            </div>
+          ) : (
+            <>
+              {/* Agent Name */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Agent Name
+                </label>
+                <input
+                  type="text"
+                  value={agentName}
+                  onChange={(e) => setAgentName(e.target.value)}
+                  maxLength={30}
+                  placeholder="e.g. Aria, Max, Nova..."
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-800 bg-gray-50"
+                />
+                <p className="text-xs text-gray-400 mt-1">This is what the agent will call itself.</p>
               </div>
 
-              <div className="space-y-3">
-                <label className="text-xs font-bold text-white/40 uppercase tracking-[0.2em] ml-1">Vocal Personality</label>
+              {/* Agent Gender */}
+              <div>
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Agent Voice / Gender
+                </label>
                 <div className="grid grid-cols-2 gap-3">
-                  {['friendly', 'professional', 'robotic', 'enthusiastic'].map((type) => (
+                  {['female', 'male'].map((g) => (
                     <button
-                      key={type}
-                      onClick={() => setGender(type)}
-                      className={`p-4 rounded-2xl border text-xs font-bold uppercase tracking-wider transition-all duration-300 flex flex-col items-center gap-2 ${
-                        gender === type 
-                          ? 'bg-primary/20 border-primary text-white neon-glow' 
-                          : 'bg-white/5 border-white/5 text-white/30 hover:bg-white/10'
+                      key={g}
+                      onClick={() => setAgentGender(g)}
+                      className={`py-3 rounded-xl border-2 font-medium capitalize transition-all ${
+                        agentGender === g
+                          ? 'border-blue-600 bg-blue-50 text-blue-700'
+                          : 'border-gray-200 text-gray-500 hover:border-gray-300 hover:bg-gray-50'
                       }`}
                     >
-                      <Mic size={14} className={gender === type ? 'text-primary' : 'text-white/20'} />
-                      {type}
+                      {g === 'female' ? '👩 Female' : '👨 Male'}
                     </button>
                   ))}
                 </div>
+                <p className="text-xs text-gray-400 mt-1">Affects how the agent introduces itself.</p>
               </div>
 
-              <div className="pt-4">
-                <button 
-                  onClick={handleSave}
-                  className="w-full bg-gradient-to-r from-primary to-secondary hover:brightness-110 text-white font-bold py-4 rounded-2xl shadow-xl shadow-primary/20 transition-all active:scale-95 flex items-center justify-center gap-3"
-                >
-                  <Save size={20} />
-                  Save Changes
-                </button>
+              {/* Preview */}
+              <div className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-100">
+                <p className="text-xs text-blue-500 font-semibold uppercase tracking-wide mb-2">Preview greeting</p>
+                <p className="text-sm text-gray-700 italic">
+                  "Hi! I'm {agentName || 'Aria'}, your personal AI journal assistant. How was your day?"
+                </p>
               </div>
-            </div>
-
-            {/* Subtle Footer Decor */}
-            <div className="h-1.5 bg-gradient-to-r from-transparent via-primary/20 to-transparent opacity-50"></div>
-          </motion.div>
+            </>
+          )}
         </div>
-      )}
-    </AnimatePresence>
+
+        {/* Footer */}
+        {!loading && (
+          <div className="px-6 pb-6 flex gap-3">
+            <button
+              onClick={onClose}
+              className="flex-1 py-3 rounded-xl border border-gray-200 text-gray-600 font-medium hover:bg-gray-50 transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving}
+              className="flex-1 py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-semibold hover:from-blue-700 hover:to-indigo-700 transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2 disabled:opacity-60"
+            >
+              {saving ? (
+                <><Loader2 size={18} className="animate-spin" /> Saving...</>
+              ) : saved ? (
+                '✅ Saved!'
+              ) : (
+                <><Save size={18} /> Save Config</>
+              )}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
