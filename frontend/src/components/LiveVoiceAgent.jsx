@@ -3,7 +3,7 @@ import { AuthContext } from '../App';
 import { Mic, Square, Loader2, Volume2, Activity, MessageSquare, Terminal, User, Sparkles } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const BACKEND_URL = "http://localhost:8000";
+const BACKEND_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 const Waveform = ({ active }) => (
   <div className="flex items-center gap-1.5 h-12">

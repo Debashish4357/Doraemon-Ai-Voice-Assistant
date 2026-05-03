@@ -4,7 +4,7 @@ import { AuthContext } from '../App';
 import { Mic, CheckSquare, History, Sparkles, ChevronRight, MessageSquare } from 'lucide-react';
 import { motion } from 'framer-motion';
 
-const API_BASE_URL = "http://localhost:8000";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 const SidebarItem = ({ to, icon: Icon, label, active }) => (
   <Link 

@@ -3,7 +3,7 @@ import { AuthContext } from '../App';
 import { Mic, Square, Loader2, Sparkles, Database, CheckCircle, Circle, BrainCircuit, Activity } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-const API_BASE_URL = "http://localhost:8000";
+const API_BASE_URL = import.meta.env.VITE_API_URL || "http://localhost:8000";
 
 export default function AetherDashboard() {
   const { user, handleSignOut } = useContext(AuthContext);

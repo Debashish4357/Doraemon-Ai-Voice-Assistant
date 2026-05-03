@@ -4,7 +4,7 @@ import { Sparkles, MessageSquare, ListTodo, Brain, Menu, X, Plus, Edit2, Trash2 
 import MessageBubble from './MessageBubble';
 import InputBar from './InputBar';
 
-const API = 'http://localhost:8000';
+const API = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 const AVATAR_SRC = '/default.png';
 
 const SUGGESTIONS = [
