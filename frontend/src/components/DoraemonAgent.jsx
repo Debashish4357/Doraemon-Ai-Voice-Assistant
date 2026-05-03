@@ -15,7 +15,15 @@ const SUGGESTIONS = [
 ];
 
 /* ── TTS ─────────────────────────────────────────────────────────────────── */
-/* ── TTS ─────────────────────────────────────────────────────────────────── */
+let voicesLoaded = false;
+let currentUtterance = null; // Global ref to prevent GC
+
+if (typeof window !== 'undefined' && window.speechSynthesis) {
+  window.speechSynthesis.onvoiceschanged = () => {
+    voicesLoaded = true;
+  };
+}
+
 function speak(text, onStart, onEnd) {
   return new Promise(resolve => {
     if (!window.speechSynthesis) {
@@ -24,40 +32,53 @@ function speak(text, onStart, onEnd) {
       return;
     }
 
+    // Stop and resume to prevent engine lock
     window.speechSynthesis.cancel();
+    window.speechSynthesis.resume();
 
     // Small delay to ensure previous speech is fully canceled
     setTimeout(() => {
       const u = new SpeechSynthesisUtterance(text);
+      currentUtterance = u; // Store globally to prevent GC
+      
       u.rate = 1.0; 
       u.pitch = 1.1; 
       u.volume = 1.0;
 
       const voices = window.speechSynthesis.getVoices();
-      // Try to find a friendly/Google voice, fallback to any English, then first available
+      
+      // Select best voice: Google/Natural -> US English -> any English -> first available
       const v = voices.find(v => v.name.includes('Google') && v.lang.startsWith('en'))
-             || voices.find(v => v.lang.startsWith('en-US'))
+             || voices.find(v => v.lang === 'en-US')
              || voices.find(v => v.lang.startsWith('en'))
              || voices[0];
       
-      if (v) u.voice = v;
+      if (v) {
+        u.voice = v;
+        console.log("Using voice:", v.name);
+      }
 
       u.onstart = () => {
-        console.log("TTS started speaking");
+        console.log("TTS started speaking:", text.substring(0, 30) + "...");
         onStart?.();
       };
+      
       u.onend = () => {
+        console.log("TTS finished speaking");
+        currentUtterance = null;
         onEnd?.();
         resolve();
       };
+      
       u.onerror = (err) => {
         console.error("TTS Error:", err);
+        currentUtterance = null;
         onEnd?.();
         resolve();
       };
 
       window.speechSynthesis.speak(u);
-    }, 100);
+    }, 150); // Increased delay slightly
   });
 }
 
@@ -106,6 +127,13 @@ export default function DoraemonAgent() {
       setTodos((await tRes.json()).tasks    || []);
       setMemories((await mRes.json()).memories || []);
     } catch (e) { console.error(e); }
+  }, []);
+
+  /* warm up voices */
+  useEffect(() => {
+    if (window.speechSynthesis) {
+      window.speechSynthesis.getVoices();
+    }
   }, []);
 
   /* init */
@@ -250,6 +278,12 @@ export default function DoraemonAgent() {
               {agentMode === 'llm_powered' ? 'LLM Mode' : 'Rule Mode'}
             </span>
           </div>
+          <button 
+            onClick={() => speak("Voice system check successful. I can hear you!", () => setStatus('speaking'), () => setStatus('idle'))}
+            className="px-3 py-1.5 rounded-full bg-blue-500 text-white text-[10px] font-bold uppercase tracking-widest hover:bg-blue-600 transition-all shadow-md"
+          >
+            Test Voice
+          </button>
           <button 
             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
             className="p-2 rounded-lg hover:bg-slate-100 text-slate-600 transition-colors"

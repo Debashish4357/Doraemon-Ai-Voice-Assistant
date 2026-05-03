@@ -1,7 +1,7 @@
 import React, { createContext, useState, useEffect } from 'react';
 import { auth, googleProvider } from './firebase';
 import { onAuthStateChanged, signInWithPopup, signOut } from 'firebase/auth';
-import LiveVoiceAgent from './components/LiveVoiceAgent';
+import DoraemonAgent from './components/DoraemonAgent';
 import { LogIn, Sparkles } from 'lucide-react';
 
 export const AuthContext = createContext();
@@ -18,11 +18,21 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  const [loggingIn, setLoggingIn] = useState(false);
+
   const handleLogin = async () => {
+    if (loggingIn) return;
+    setLoggingIn(true);
     try {
       await signInWithPopup(auth, googleProvider);
     } catch (error) {
-      console.error("Login failed:", error);
+      if (error.code === 'auth/popup-blocked') {
+        alert("Please allow popups for this site to log in!");
+      } else {
+        console.error("Login failed:", error);
+      }
+    } finally {
+      setLoggingIn(false);
     }
   };
 
@@ -70,7 +80,7 @@ export default function App() {
 
   return (
     <AuthContext.Provider value={{ user, handleSignOut }}>
-      <LiveVoiceAgent />
+      <DoraemonAgent />
     </AuthContext.Provider>
   );
 }
