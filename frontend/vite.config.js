@@ -10,7 +10,7 @@ export default defineConfig({
     },
   },
   build: {
-    outDir: '../webapp_public',
+    outDir: 'dist',
     emptyOutDir: true,
   }
 })
