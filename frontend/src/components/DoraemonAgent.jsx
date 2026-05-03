@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, MessageSquare, ListTodo, Brain, Menu, X, Plus, Edit2, Trash2, Volume2 } from 'lucide-react';
+import { Sparkles, MessageSquare, ListTodo, Brain, Menu, X, Plus, Edit2, Trash2 } from 'lucide-react';
 import MessageBubble from './MessageBubble';
 import InputBar from './InputBar';
 
@@ -15,10 +15,6 @@ const SUGGESTIONS = [
 ];
 
 /* ── TTS ─────────────────────────────────────────────────────────────────── */
-let voicesLoaded = false;
-let currentUtterance = null; // Global ref to prevent GC
-let selectedVoiceName = localStorage.getItem('doraemon_voice') || null;
-
 if (typeof window !== 'undefined' && window.speechSynthesis) {
   window.speechSynthesis.onvoiceschanged = () => {
     voicesLoaded = true;
@@ -42,22 +38,18 @@ function speak(text, onStart, onEnd) {
       const u = new SpeechSynthesisUtterance(text);
       currentUtterance = u; // Store globally to prevent GC
       
-      // Tweak for "Doraemon" style: High pitch, slightly faster
-      u.rate = 1.1; 
-      u.pitch = 1.7; 
+      // Reset to original default settings
+      u.rate = 1.0; 
+      u.pitch = 1.1; 
       u.volume = 1.0;
 
       const voices = window.speechSynthesis.getVoices();
       
-      // Use user-selected voice if available, otherwise fallback to best match
-      let v = voices.find(v => v.name === selectedVoiceName);
-      
-      if (!v) {
-        v = voices.find(v => v.name.includes('Google') && v.lang.startsWith('en'))
-         || voices.find(v => v.lang === 'en-US')
-         || voices.find(v => v.lang.startsWith('en'))
-         || voices[0];
-      }
+      // Select best voice: Google/Natural -> US English -> any English -> first available
+      const v = voices.find(v => v.name.includes('Google') && v.lang.startsWith('en'))
+             || voices.find(v => v.lang === 'en-US')
+             || voices.find(v => v.lang.startsWith('en'))
+             || voices[0];
       
       if (v) {
         u.voice = v;
@@ -114,6 +106,14 @@ export default function DoraemonAgent() {
   const [editingTask, setEditingTask] = useState(null);
   const [modalText, setModalText] = useState('');
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [user, setUser] = useState(null); // Local user state for API calls
+
+  useEffect(() => {
+    // In a real app we'd use Firebase Auth listener, but for now we check context if available
+    // or fallback to 'default'. Since this is wrapped in AuthContext, we'll use a placeholder
+    // or just 'default' for now to keep it simple while reverting.
+    setUser({ uid: 'default' }); 
+  }, []);
 
   const recognitionRef = useRef(null);
   const shouldStopRef  = useRef(false);
@@ -128,32 +128,20 @@ export default function DoraemonAgent() {
   const fetchData = useCallback(async () => {
     try {
       const [tRes, mRes] = await Promise.all([
-        fetch(`${API}/todo/list`), fetch(`${API}/memory/list`)
+        fetch(`${API}/todo/list/${user?.uid || 'default'}`), 
+        fetch(`${API}/memory/list/${user?.uid || 'default'}`)
       ]);
       setTodos((await tRes.json()).tasks    || []);
       setMemories((await mRes.json()).memories || []);
     } catch (e) { console.error(e); }
   }, []);
 
-  const [availableVoices, setAvailableVoices] = useState([]);
-
   /* warm up voices */
   useEffect(() => {
     if (window.speechSynthesis) {
-      const updateVoices = () => {
-        const voices = window.speechSynthesis.getVoices();
-        setAvailableVoices(voices.filter(v => v.lang.startsWith('en')));
-      };
-      updateVoices();
-      window.speechSynthesis.onvoiceschanged = updateVoices;
+      window.speechSynthesis.getVoices();
     }
   }, []);
-
-  const handleVoiceChange = (e) => {
-    selectedVoiceName = e.target.value;
-    localStorage.setItem('doraemon_voice', selectedVoiceName);
-    speak("Voice updated. How do I sound?", () => setStatus('speaking'), () => setStatus('idle'));
-  };
 
   /* init */
   useEffect(() => {
@@ -245,15 +233,16 @@ export default function DoraemonAgent() {
   }, [textInput, sendToAgent]);
 
   /* task CRUD */
-  const deleteTask  = async id => { await fetch(`${API}/todo/delete/${id}`, { method: 'DELETE' }); fetchData(); };
+  const deleteTask  = async id => { await fetch(`${API}/todo/delete/${user?.uid || 'default'}/${id}`, { method: 'DELETE' }); fetchData(); };
   const openAdd     = () => { setModalMode('add'); setModalText(''); setEditingTask(null); setShowModal(true); };
   const openEdit    = t  => { setModalMode('edit'); setModalText(t.text); setEditingTask(t); setShowModal(true); };
   const submitModal = async () => {
     if (!modalText.trim()) return;
+    const uid = user?.uid || 'default';
     if (modalMode === 'add') {
-      await fetch(`${API}/todo/add`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task: modalText.trim() }) });
+      await fetch(`${API}/todo/add/${uid}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task: modalText.trim() }) });
     } else {
-      await fetch(`${API}/todo/update/${editingTask.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task: modalText.trim() }) });
+      await fetch(`${API}/todo/update/${uid}/${editingTask.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task: modalText.trim() }) });
     }
     setShowModal(false); setModalText(''); setEditingTask(null); fetchData();
   };
@@ -298,19 +287,6 @@ export default function DoraemonAgent() {
             </span>
           </div>
 
-          <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/50 border border-white shadow-sm">
-            <Volume2 size={12} className="text-slate-400" />
-            <select 
-              onChange={handleVoiceChange}
-              defaultValue={selectedVoiceName || ""}
-              className="bg-transparent border-none text-[10px] font-bold text-slate-600 uppercase tracking-tight focus:ring-0 cursor-pointer max-w-[100px] truncate"
-            >
-              <option value="">Default Voice</option>
-              {availableVoices.map(v => (
-                <option key={v.name} value={v.name}>{v.name}</option>
-              ))}
-            </select>
-          </div>
 
           <button 
             onClick={() => speak("Voice system check successful. I can hear you!", () => setStatus('speaking'), () => setStatus('idle'))}
