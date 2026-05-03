@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Synchronous client for easier integration with current service structure
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+# Flexible URI check
+MONGO_URI = os.getenv("MONGO_URI") or os.getenv("MONGODB_URI") or "mongodb://localhost:27017"
 DB_NAME = os.getenv("MONGO_DB_NAME", "voice_ai_agent_db")
 
 client = MongoClient(MONGO_URI)
