@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Sparkles, MessageSquare, ListTodo, Brain, Menu, X, Plus, Edit2, Trash2 } from 'lucide-react';
+import { Sparkles, MessageSquare, ListTodo, Brain, Menu, X, Plus, Edit2, Trash2, Volume2 } from 'lucide-react';
 import MessageBubble from './MessageBubble';
 import InputBar from './InputBar';
 
@@ -17,6 +17,7 @@ const SUGGESTIONS = [
 /* ── TTS ─────────────────────────────────────────────────────────────────── */
 let voicesLoaded = false;
 let currentUtterance = null; // Global ref to prevent GC
+let selectedVoiceName = localStorage.getItem('doraemon_voice') || null;
 
 if (typeof window !== 'undefined' && window.speechSynthesis) {
   window.speechSynthesis.onvoiceschanged = () => {
@@ -47,11 +48,15 @@ function speak(text, onStart, onEnd) {
 
       const voices = window.speechSynthesis.getVoices();
       
-      // Select best voice: Google/Natural -> US English -> any English -> first available
-      const v = voices.find(v => v.name.includes('Google') && v.lang.startsWith('en'))
-             || voices.find(v => v.lang === 'en-US')
-             || voices.find(v => v.lang.startsWith('en'))
-             || voices[0];
+      // Use user-selected voice if available, otherwise fallback to best match
+      let v = voices.find(v => v.name === selectedVoiceName);
+      
+      if (!v) {
+        v = voices.find(v => v.name.includes('Google') && v.lang.startsWith('en'))
+         || voices.find(v => v.lang === 'en-US')
+         || voices.find(v => v.lang.startsWith('en'))
+         || voices[0];
+      }
       
       if (v) {
         u.voice = v;
@@ -129,12 +134,25 @@ export default function DoraemonAgent() {
     } catch (e) { console.error(e); }
   }, []);
 
+  const [availableVoices, setAvailableVoices] = useState([]);
+
   /* warm up voices */
   useEffect(() => {
     if (window.speechSynthesis) {
-      window.speechSynthesis.getVoices();
+      const updateVoices = () => {
+        const voices = window.speechSynthesis.getVoices();
+        setAvailableVoices(voices.filter(v => v.lang.startsWith('en')));
+      };
+      updateVoices();
+      window.speechSynthesis.onvoiceschanged = updateVoices;
     }
   }, []);
+
+  const handleVoiceChange = (e) => {
+    selectedVoiceName = e.target.value;
+    localStorage.setItem('doraemon_voice', selectedVoiceName);
+    speak("Voice updated. How do I sound?", () => setStatus('speaking'), () => setStatus('idle'));
+  };
 
   /* init */
   useEffect(() => {
@@ -278,6 +296,21 @@ export default function DoraemonAgent() {
               {agentMode === 'llm_powered' ? 'LLM Mode' : 'Rule Mode'}
             </span>
           </div>
+
+          <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/50 border border-white shadow-sm">
+            <Volume2 size={12} className="text-slate-400" />
+            <select 
+              onChange={handleVoiceChange}
+              defaultValue={selectedVoiceName || ""}
+              className="bg-transparent border-none text-[10px] font-bold text-slate-600 uppercase tracking-tight focus:ring-0 cursor-pointer max-w-[100px] truncate"
+            >
+              <option value="">Default Voice</option>
+              {availableVoices.map(v => (
+                <option key={v.name} value={v.name}>{v.name}</option>
+              ))}
+            </select>
+          </div>
+
           <button 
             onClick={() => speak("Voice system check successful. I can hear you!", () => setStatus('speaking'), () => setStatus('idle'))}
             className="px-3 py-1.5 rounded-full bg-blue-500 text-white text-[10px] font-bold uppercase tracking-widest hover:bg-blue-600 transition-all shadow-md"
