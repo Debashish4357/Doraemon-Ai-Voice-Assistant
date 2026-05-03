@@ -1,32 +1,47 @@
 """
-Memory Service — In-memory storage for user facts.
-Each memory: { id, content, saved_at }
+Memory Service — MongoDB-backed storage for user facts.
+Supports user isolation via user_id.
 """
 import time
+import os
+from pymongo import MongoClient
+from dotenv import load_dotenv
 
-# In-memory store
-_memories: list = []
+load_dotenv()
 
+MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+DB_NAME = os.getenv("MONGO_DB_NAME", "voice_ai_agent_db")
 
-def save_memory(content: str) -> dict:
+client = MongoClient(MONGO_URI)
+db = client[DB_NAME]
+memories_col = db["memories"]
+
+def save_memory(content: str, user_id: str = "default") -> dict:
     """Save a new memory item. Returns the saved item."""
     memory = {
-        "id": str(int(time.time() * 1000)),
+        "user_id": user_id,
         "content": content,
         "saved_at": time.strftime("%Y-%m-%d %H:%M")
     }
-    _memories.append(memory)
+    result = memories_col.insert_one(memory)
+    memory["id"] = str(result.inserted_id)
+    del memory["_id"]
     return memory
 
+def list_memories(user_id: str = "default") -> list:
+    """Return all stored memories for a user."""
+    cursor = memories_col.find({"user_id": user_id}).sort("saved_at", -1)
+    memories = []
+    for doc in cursor:
+        doc["id"] = str(doc["_id"])
+        del doc["_id"]
+        memories.append(doc)
+    return memories
 
-def list_memories() -> list:
-    """Return all stored memories."""
-    return list(reversed(_memories))
-
-
-def get_memories_as_text() -> str:
+def get_memories_as_text(user_id: str = "default") -> str:
     """Return memories as a readable string for agent context."""
-    if not _memories:
+    memories = list_memories(user_id)
+    if not memories:
         return "I don't have any memories stored yet."
-    items = [f"- {m['content']}" for m in _memories]
+    items = [f"- {m['content']}" for m in memories]
     return "Here is what I remember about you:\n" + "\n".join(items)

@@ -38,7 +38,7 @@ def chat(req: ChatRequest):
             print(f"[LLM Error] {e} — falling back to rule-based")
 
     # ── Rule-based fallback ────────────────────────────────────────────────────
-    return agent_service.process_message(msg)
+    return agent_service.process_message(msg, user_id=req.session_id)
 
 
 @router.get("/mode")

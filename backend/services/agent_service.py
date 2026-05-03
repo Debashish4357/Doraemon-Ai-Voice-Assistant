@@ -14,7 +14,7 @@ def _extract_after(message: str, keyword: str) -> str:
     return message[idx + len(keyword):].strip(" .,:!?")
 
 
-def process_message(message: str) -> dict:
+def process_message(message: str, user_id: str = "default") -> dict:
     """
     Rule-based intent detection and dispatch.
     Returns: { type, response, data }
@@ -36,10 +36,10 @@ def process_message(message: str) -> dict:
 
     # ── PRESETS ───────────────────────────────────────────────────────────────
     if "preset" in msg:
-        todo_service.add_todo("Repair the Time Machine")
-        todo_service.add_todo("Buy Dorayaki for the party")
-        todo_service.add_todo("Help Nobita with math homework")
-        memory_service.save_memory("I must remember to hide my gadgets from Gian")
+        todo_service.add_todo("Repair the Time Machine", user_id=user_id)
+        todo_service.add_todo("Buy Dorayaki for the party", user_id=user_id)
+        todo_service.add_todo("Help Nobita with math homework", user_id=user_id)
+        memory_service.save_memory("I must remember to hide my gadgets from Gian", user_id=user_id)
         return {
             "type": "chat",
             "response": "I've loaded your Doraemon-themed presets! Check your sidebar.",
@@ -52,7 +52,7 @@ def process_message(message: str) -> dict:
             task_text = _extract_after(message, kw)
             if not task_text:
                 return {"type": "chat", "response": "What task should I add?", "data": None}
-            task = todo_service.add_todo(task_text)
+            task = todo_service.add_todo(task_text, user_id=user_id)
             return {
                 "type": "todo",
                 "response": f"Done, added '{task_text}' to your tasks.",
@@ -66,9 +66,9 @@ def process_message(message: str) -> dict:
             if " to " in rest.lower():
                 old_text, new_text = rest.lower().split(" to ", 1)
                 old_text, new_text = old_text.strip(), new_text.strip()
-                for task in todo_service.list_todos():
+                for task in todo_service.list_todos(user_id=user_id):
                     if old_text in task["text"].lower():
-                        todo_service.update_todo(task["id"], new_text)
+                        todo_service.update_todo(task["id"], new_text, user_id=user_id)
                         return {
                             "type": "todo",
                             "response": f"Updated — '{task['text']}' is now '{new_text}'.",
@@ -88,14 +88,14 @@ def process_message(message: str) -> dict:
     # ── TO-DO: DELETE ──────────────────────────────────────────────────────────
     for kw in ["delete task", "remove task", "complete task", "done with", "finish task"]:
         if kw in msg:
-            tasks = todo_service.list_todos()
+            tasks = todo_service.list_todos(user_id=user_id)
             if not tasks:
                 return {"type": "todo", "response": "You have no tasks to delete.", "data": None}
             deleted = None
             # Match by task text in message
             for task in tasks:
                 if task["text"].lower() in msg:
-                    todo_service.delete_todo(task["id"])
+                    todo_service.delete_todo(task["id"], user_id=user_id)
                     deleted = task
                     break
             # Fuzzy fallback
@@ -103,7 +103,7 @@ def process_message(message: str) -> dict:
                 search = _extract_after(message, kw).lower()
                 for task in tasks:
                     if search and (search in task["text"].lower() or task["text"].lower() in search):
-                        todo_service.delete_todo(task["id"])
+                        todo_service.delete_todo(task["id"], user_id=user_id)
                         deleted = task
                         break
             if deleted:
@@ -124,7 +124,7 @@ def process_message(message: str) -> dict:
         "show task", "list task", "show todo", "my task",
         "what are my task", "show my task", "all task", "pending task"
     ]):
-        tasks = todo_service.list_todos()
+        tasks = todo_service.list_todos(user_id=user_id)
         if not tasks:
             return {
                 "type": "todo",
@@ -144,7 +144,7 @@ def process_message(message: str) -> dict:
             content = _extract_after(message, kw)
             if not content:
                 return {"type": "chat", "response": "What should I remember?", "data": None}
-            mem = memory_service.save_memory(content)
+            mem = memory_service.save_memory(content, user_id=user_id)
             return {
                 "type": "memory",
                 "response": f"Got it, I'll remember: '{content}'.",
@@ -158,8 +158,8 @@ def process_message(message: str) -> dict:
     ]):
         return {
             "type": "memory",
-            "response": memory_service.get_memories_as_text(),
-            "data": {"action": "list", "memories": memory_service.list_memories()}
+            "response": memory_service.get_memories_as_text(user_id=user_id),
+            "data": {"action": "list", "memories": memory_service.list_memories(user_id=user_id)}
         }
 
     # ── GOODBYE ────────────────────────────────────────────────────────────────
@@ -184,8 +184,8 @@ def process_message(message: str) -> dict:
         }
 
     # ── DEFAULT ────────────────────────────────────────────────────────────────
-    task_count = todo_service.get_todo_count()
-    mem_count = len(memory_service.list_memories())
+    task_count = todo_service.get_todo_count(user_id=user_id)
+    mem_count = len(memory_service.list_memories(user_id=user_id))
     context = ""
     if task_count or mem_count:
         context = f" You have {task_count} task{'s' if task_count != 1 else ''} and {mem_count} memor{'ies' if mem_count != 1 else 'y'}."

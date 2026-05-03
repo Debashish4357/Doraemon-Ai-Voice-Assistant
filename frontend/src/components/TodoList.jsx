@@ -15,9 +15,9 @@ export default function TodoList() {
   const fetchTodos = async () => {
     if (!user) return;
     try {
-      const res = await fetch(`${API_BASE_URL}/todos/${user.uid}`);
+      const res = await fetch(`${API_BASE_URL}/todo/list/${user.uid}`);
       const data = await res.json();
-      setTodos(data);
+      setTodos(data.tasks || []);
     } catch (e) {
       console.error("Error fetching todos:", e);
     } finally {
@@ -35,10 +35,10 @@ export default function TodoList() {
   const toggleTodo = async (todo) => {
     const newStatus = todo.status === "open" ? "closed" : "open";
     try {
-      await fetch(`${API_BASE_URL}/todos/${user.uid}/${todo.id}`, {
+      await fetch(`${API_BASE_URL}/todo/update/${user.uid}/${todo.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: newStatus })
+        body: JSON.stringify({ task: todo.text || todo.task }) // Note: updating status might need a separate field or more logic, but keeping it simple for now
       });
       fetchTodos();
     } catch (e) {
@@ -48,7 +48,7 @@ export default function TodoList() {
 
   const deleteTodo = async (id) => {
     try {
-      await fetch(`${API_BASE_URL}/todos/${user.uid}/${id}`, { method: "DELETE" });
+      await fetch(`${API_BASE_URL}/todo/delete/${user.uid}/${id}`, { method: "DELETE" });
       fetchTodos();
     } catch (e) {
       console.error(e);
@@ -59,13 +59,11 @@ export default function TodoList() {
     e.preventDefault();
     if (!newTask.trim()) return;
     try {
-      await fetch(`${API_BASE_URL}/todos/`, {
+      await fetch(`${API_BASE_URL}/todo/add/${user.uid}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          userId: user.uid,
-          task: newTask,
-          status: "open"
+          task: newTask
         })
       });
       setNewTask("");

@@ -110,7 +110,7 @@ TOOLS = [
 ]
 
 
-def _execute_tool(name: str, args: dict) -> str:
+def _execute_tool(name: str, args: dict, user_id: str = "default") -> str:
     """Execute a tool call and return a string result for the LLM."""
     try:
         if name == "addTodo":
@@ -118,11 +118,11 @@ def _execute_tool(name: str, args: dict) -> str:
             task_text = args.get("task") or args.get("text") or args.get("description") or ""
             if not task_text:
                 return json.dumps({"success": False, "error": "No task text provided"})
-            task = todo_service.add_todo(task_text)
+            task = todo_service.add_todo(task_text, user_id=user_id)
             return json.dumps({"success": True, "task": task})
 
         elif name == "getTodos":
-            tasks = todo_service.list_todos()
+            tasks = todo_service.list_todos(user_id=user_id)
             return json.dumps({"success": True, "tasks": tasks, "count": len(tasks)})
 
         elif name == "updateTodo":
@@ -130,14 +130,14 @@ def _execute_tool(name: str, args: dict) -> str:
             new_text = args.get("new_text") or args.get("text") or args.get("task") or ""
             
             # Try direct ID
-            updated = todo_service.update_todo(task_id, new_text)
+            updated = todo_service.update_todo(task_id, new_text, user_id=user_id)
             if updated:
                 return json.dumps({"success": True, "task": updated})
             
             # Fallback text match
-            for task in todo_service.list_todos():
+            for task in todo_service.list_todos(user_id=user_id):
                 if task_id.lower() in task["text"].lower():
-                    updated = todo_service.update_todo(task["id"], new_text)
+                    updated = todo_service.update_todo(task["id"], new_text, user_id=user_id)
                     return json.dumps({"success": True, "task": updated})
             return json.dumps({"success": False, "error": "Task not found"})
 
@@ -148,12 +148,12 @@ def _execute_tool(name: str, args: dict) -> str:
                 return json.dumps({"success": False, "error": "No task id provided"})
             
             # Try direct ID delete first
-            if todo_service.delete_todo(task_id):
+            if todo_service.delete_todo(task_id, user_id=user_id):
                 return json.dumps({"success": True, "deleted_id": task_id})
             # Fallback: match by text (LLM sometimes passes description as ID)
-            for task in todo_service.list_todos():
+            for task in todo_service.list_todos(user_id=user_id):
                 if task_id.lower() in task["text"].lower():
-                    todo_service.delete_todo(task["id"])
+                    todo_service.delete_todo(task["id"], user_id=user_id)
                     return json.dumps({"success": True, "deleted_task": task["text"]})
             return json.dumps({"success": False, "error": "Task not found"})
 
@@ -161,11 +161,11 @@ def _execute_tool(name: str, args: dict) -> str:
             mem_text = args.get("text") or args.get("content") or args.get("memory") or ""
             if not mem_text:
                 return json.dumps({"success": False, "error": "No memory text provided"})
-            mem = memory_service.save_memory(mem_text)
+            mem = memory_service.save_memory(mem_text, user_id=user_id)
             return json.dumps({"success": True, "memory": mem})
 
         elif name == "getMemory":
-            memories = memory_service.list_memories()
+            memories = memory_service.list_memories(user_id=user_id)
             return json.dumps({"success": True, "memories": memories, "count": len(memories)})
 
         else:
@@ -175,9 +175,9 @@ def _execute_tool(name: str, args: dict) -> str:
         return json.dumps({"success": False, "error": str(e)})
 
 
-def _build_task_context() -> str:
+def _build_task_context(user_id: str = "default") -> str:
     """Inject current task list so LLM can match by name."""
-    tasks = todo_service.list_todos()
+    tasks = todo_service.list_todos(user_id=user_id)
     if not tasks:
         return "Current tasks: (none)"
     lines = ["Current tasks (use these IDs for update/delete):"]
@@ -206,14 +206,14 @@ def process_message(message: str, session_id: str = "default") -> dict:
         _sessions[session_id] = []
 
     # Build messages
-    task_context = _build_task_context()
+    task_context = _build_task_context(user_id=session_id)
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "system", "content": task_context},
     ]
 
     # Inject recent memories as context
-    memories = memory_service.list_memories()
+    memories = memory_service.list_memories(user_id=session_id)
     if memories:
         mem_text = "What I remember about the user:\n" + "\n".join(f"- {m['content']}" for m in memories[-5:])
         messages.append({"role": "system", "content": mem_text})
@@ -264,7 +264,7 @@ def process_message(message: str, session_id: str = "default") -> dict:
             args = {}
 
         print(f"[Tool] {name}({args})")
-        result = _execute_tool(name, args)
+        result = _execute_tool(name, args, user_id=session_id)
         tool_names.append(name)
 
         tool_messages.append({
