@@ -42,8 +42,9 @@ function speak(text, onStart, onEnd) {
       const u = new SpeechSynthesisUtterance(text);
       currentUtterance = u; // Store globally to prevent GC
       
-      u.rate = 1.0; 
-      u.pitch = 1.1; 
+      // Tweak for "Doraemon" style: High pitch, slightly faster
+      u.rate = 1.1; 
+      u.pitch = 1.7; 
       u.volume = 1.0;
 
       const voices = window.speechSynthesis.getVoices();
