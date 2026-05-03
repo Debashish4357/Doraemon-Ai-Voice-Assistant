@@ -15,6 +15,9 @@ const SUGGESTIONS = [
 ];
 
 /* ── TTS ─────────────────────────────────────────────────────────────────── */
+let voicesLoaded = false;
+let currentUtterance = null; // Global ref to prevent GC
+
 if (typeof window !== 'undefined' && window.speechSynthesis) {
   window.speechSynthesis.onvoiceschanged = () => {
     voicesLoaded = true;
