@@ -80,8 +80,8 @@ export default function DoraemonAgent() {
   const fetchData = useCallback(async () => {
     try {
       const [tRes, mRes] = await Promise.all([
-        fetch(`${API}/todo/list`),
-        fetch(`${API}/memory/list`)
+        fetch(`${API}/todo/list/default`),
+        fetch(`${API}/memory/list/default`)
       ]);
       setTodos((await tRes.json()).tasks || []);
       setMemories((await mRes.json()).memories || []);
@@ -173,16 +173,16 @@ export default function DoraemonAgent() {
     setTextInput(''); await sendToAgent(msg);
   }, [textInput, sendToAgent]);
 
-  const deleteTask = async id => { await fetch(`${API}/todo/delete/${id}`, { method: 'DELETE' }); fetchData(); };
-  const deleteMemory = async id => { await fetch(`${API}/memory/delete/${id}`, { method: 'DELETE' }); fetchData(); };
+  const deleteTask = async id => { await fetch(`${API}/todo/delete/default/${id}`, { method: 'DELETE' }); fetchData(); };
+  const deleteMemory = async id => { await fetch(`${API}/memory/delete/default/${id}`, { method: 'DELETE' }); fetchData(); };
   const openAdd = () => { setModalMode('add'); setModalText(''); setEditingTask(null); setShowModal(true); };
   const openEdit = t => { setModalMode('edit'); setModalText(t.text); setEditingTask(t); setShowModal(true); };
   const submitModal = async () => {
     if (!modalText.trim()) return;
     if (modalMode === 'add') {
-      await fetch(`${API}/todo/add`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task: modalText.trim() }) });
+      await fetch(`${API}/todo/add/default`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task: modalText.trim() }) });
     } else {
-      await fetch(`${API}/todo/update/${editingTask.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task: modalText.trim() }) });
+      await fetch(`${API}/todo/update/default/${editingTask.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ task: modalText.trim() }) });
     }
     setShowModal(false); setModalText(''); setEditingTask(null); fetchData();
   };
