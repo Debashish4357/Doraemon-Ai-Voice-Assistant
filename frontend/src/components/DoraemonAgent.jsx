@@ -268,12 +268,12 @@ export default function DoraemonAgent() {
   );
 
   return (
-    <div className="relative h-screen w-full flex flex-col overflow-hidden">
+    <div className="relative h-screen w-full flex flex-col overflow-hidden" style={{ paddingTop: 'env(safe-area-inset-top)', paddingBottom: 'env(safe-area-inset-bottom)' }}>
       <div className="bg-doraemon" />
       <div className="bg-gradient-overlay" />
 
       {/* ── Topbar ── */}
-      <header className="h-14 md:h-16 flex items-center justify-between px-3 md:px-6 z-50 glass-card !border-x-0 !border-t-0 shadow-sm shrink-0">
+      <header className="flex items-center justify-between px-3 md:px-6 z-50 glass-card !border-x-0 !border-t-0 shadow-sm shrink-0" style={{ minHeight: '3.5rem', paddingTop: '0.5rem', paddingBottom: '0.5rem' }}>
         <div className="flex items-center gap-2 md:gap-3">
           <div className="w-8 h-8 md:w-10 md:h-10 rounded-xl overflow-hidden shadow-md border border-white/50">
             <img src={AVATAR_SRC} alt="Doraemon" className="w-full h-full object-cover" />

@@ -3,7 +3,7 @@ import { Mic, Send, Square } from 'lucide-react';
 
 export default function InputBar({ status, isRunning, textInput, setTextInput, toggleListening, handleTextSubmit }) {
   return (
-    <div className="fixed bottom-0 left-0 right-0 px-3 py-3 md:p-6 flex justify-center z-40 bg-gradient-to-t from-slate-50/90 to-transparent">
+    <div className="fixed bottom-0 left-0 right-0 px-3 py-3 md:p-6 flex justify-center z-40 bg-gradient-to-t from-slate-50/90 to-transparent" style={{ paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}>
       <div className="w-full max-w-[800px] glass-input rounded-full p-1.5 flex items-center gap-2 transition-all duration-300 shadow-lg">
 
         {/* Mic Button */}
