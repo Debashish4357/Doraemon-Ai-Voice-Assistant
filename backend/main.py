@@ -2,6 +2,7 @@
 Doraemon AI Voice Agent - Backend Entry Point
 FastAPI server with CORS, routing, and startup greeting.
 """
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
@@ -14,11 +15,15 @@ app = FastAPI(
     version="2.0.0"
 )
 
-# Allow React frontend (any origin in dev)
+# ── CORS ──────────────────────────────────────────────────────────────────────
+# allow_origins=["*"] is INCOMPATIBLE with allow_credentials=True in browsers.
+# We use allow_credentials=False (default) and allow all origins safely.
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "*").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -32,3 +37,7 @@ app.include_router(agent.router, prefix="/agent", tags=["Agent"])
 @app.get("/")
 def root():
     return {"message": "Doraemon AI Agent is online. Visit /docs for API reference."}
+
+@app.get("/health")
+def health():
+    return {"status": "ok"}
